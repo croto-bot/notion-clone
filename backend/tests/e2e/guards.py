@@ -12,7 +12,10 @@ Ruff's banned-api rule (TID251 in pyproject.toml) blocks the imports as well.
 Guard 2, route coverage: after a full run, every route of the real app must
 have received at least one successful (status < 400) request from the suite.
 The server records each request it routes (its wide-event log line), so any
-HTTP client counts. Routes that cannot succeed without a third party go in
+HTTP client counts. WebSocket routes are covered the same way: their
+endpoints log one "websocket_completed" line per connection (the
+WideEventMiddleware only sees HTTP), which counts as the route's hit.
+Routes that cannot succeed without a third party go in
 ROUTE_COVERAGE_ALLOWLIST, each with its reason. KNOWN_GAPS lists covered
 routes with a path no test can reach; every full run prints it.
 
@@ -260,8 +263,12 @@ def app_routes() -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
     """Return the real app's HTTP routes and the routes the guard cannot see.
 
     Both are sets of (method, path template). HTTP routes are what the server
-    logs a wide event for. Other kinds (WebSocket routes, Mounts) are keyed by
-    their kind, for example ("WEBSOCKET", "/ws") or ("MOUNT", "/static").
+    logs a wide event for. WebSocket routes are keyed ("WEBSOCKET", path):
+    their endpoints log one "websocket_completed" line per connection
+    (app.core.websockets.log_socket), which ServerLog.feed records like a
+    route hit — so a WebSocket route needs a successful (<400) connection in
+    the suite, exactly like an HTTP route needs a successful request. Other
+    kinds (Mounts) are keyed by their kind, for example ("MOUNT", "/static").
     """
     from starlette.routing import Mount, Route, WebSocketRoute
 
@@ -277,7 +284,8 @@ def app_routes() -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
                 methods.discard("HEAD")
             http.update((method, route.path) for method in methods)
         elif isinstance(route, WebSocketRoute):
-            unseen.add(("WEBSOCKET", route.path))
+            # Covered through the endpoints' own "websocket_completed" lines.
+            http.add(("WEBSOCKET", route.path))
         elif isinstance(route, Mount):
             unseen.add(("MOUNT", route.path))
         else:

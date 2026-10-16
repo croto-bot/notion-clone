@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING
 
 from tests.e2e.helpers import (
     assert_error,
-    create_item,
+    create_page,
+    create_workspace,
     drop_server_connections,
     password_reset_token,
     unique_email,
@@ -30,20 +31,23 @@ def test_each_request_emits_exactly_one_wide_event(
 ) -> None:
     user = register_user()
 
-    response = user.client.post("/items", json={"name": "Logged"})
-    item = response.json()
+    response = user.client.post("/workspaces", json={"name": "Logged"})
+    workspace = response.json()
 
     event = server_log.wide_event_for(response)
     assert event["level"] == "INFO"
     assert event["method"] == "POST"
-    assert event["path"] == "/items"
+    assert event["path"] == "/workspaces"
     assert event["status_code"] == 201
     assert event["duration_ms"] >= 0
     uuid.UUID(event["request_id"])
     assert event["user_id"] == user.id
     assert event["email"] == user.email
     assert event["action"] == "create"
-    assert (event["entity_type"], event["entity_id"]) == ("item", item["id"])
+    assert (event["entity_type"], event["entity_id"]) == (
+        "workspaces",
+        workspace["id"],
+    )
     assert "entity_ids" not in event
     assert (event["service"], event["environment"]) == ("backend-e2e", "local")
     same_request = [
@@ -55,21 +59,22 @@ def test_each_request_emits_exactly_one_wide_event(
 def test_wide_event_names_the_route_template(
     auth_client: httpx.Client, server_log: ServerLogView
 ) -> None:
-    item = create_item(auth_client)
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
 
-    response = auth_client.patch(f"/items/{item['id']}", json={"name": "Renamed"})
+    response = auth_client.patch(f"/pages/{page['id']}", json={"title": "Renamed"})
 
     event = server_log.wide_event_for(response)
-    assert event["path"] == f"/items/{item['id']}"
-    assert event["path_template"] == "/items/{item_id}"
-    assert (event["action"], event["entity_type"]) == ("update", "item")
-    assert event["entity_id"] == item["id"]
+    assert event["path"] == f"/pages/{page['id']}"
+    assert event["path_template"] == "/pages/{page_id}"
+    assert (event["action"], event["entity_type"]) == ("update", "pages")
+    assert event["entity_id"] == page["id"]
 
 
 def test_client_errors_are_logged_as_warnings(
     auth_client: httpx.Client, server_log: ServerLogView
 ) -> None:
-    response = auth_client.get(f"/items/{uuid.uuid4()}")
+    response = auth_client.get(f"/pages/{uuid.uuid4()}")
     assert response.status_code == 404
 
     event = server_log.wide_event_for(response)
@@ -164,7 +169,7 @@ def test_unhandled_error_is_logged_with_its_traceback(
 ) -> None:
     user = register_user()
     with drop_server_connections(db, user.client):
-        response = user.client.get("/items")
+        response = user.client.get("/workspaces")
 
     assert response.status_code == 500
     event = server_log.wide_event_for(response)
@@ -172,7 +177,7 @@ def test_unhandled_error_is_logged_with_its_traceback(
     assert (event["status_code"], event["error"]) == (500, True)
     assert event["error_type"]
     assert event["exception"]["type"] == event["error_type"]
-    assert (event["method"], event["path"]) == ("GET", "/items")
+    assert (event["method"], event["path"]) == ("GET", "/workspaces")
     # The database error names the statement, never its parameter values.
     assert "[SQL parameters hidden" in event["error_message"]
 
