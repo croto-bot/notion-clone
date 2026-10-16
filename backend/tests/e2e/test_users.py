@@ -8,7 +8,8 @@ import pytest
 
 from tests.e2e.helpers import (
     assert_error,
-    create_item,
+    create_page,
+    create_workspace,
     email_verification_token,
     login,
     password_reset_token,
@@ -150,11 +151,12 @@ def test_update_rejects_invalid_values(
     assert (me["email"], me["display_name"]) == (user.email, "Unchanged")
 
 
-def test_delete_removes_the_account_its_sessions_and_its_items(
+def test_delete_removes_the_account_its_sessions_and_its_data(
     api: httpx.Client, register_user: Callable[..., RegisteredUser], db: Database
 ) -> None:
     user = register_user()
-    create_item(user.client, name="Owned by the deleted user")
+    workspace = create_workspace(user.client, name="Owned by the deleted user")
+    create_page(user.client, workspace["id"])
     # Open tokens of both kinds; the delete must remove them too.
     api.post("/auth/password/reset", json={"email": user.email})
     user.client.post("/auth/email/verify")
@@ -167,9 +169,15 @@ def test_delete_removes_the_account_its_sessions_and_its_items(
     assert response.content == b""
     assert_error(user.client.get("/users/me"), 401, "invalid_session")
     assert_error(login(api, user.email, user.password), 401, "authentication_error")
-    # No endpoint lists another user's rows; the database shows the cascade.
+    # No endpoint lists another user's rows; the database shows the cascades
+    # (workspaces and their pages go with the owner's membership rows).
+    assert db.fetch_one(
+        "SELECT count(*) FROM workspaces WHERE id = %s", (workspace["id"],)
+    ) == (0,)
+    assert db.fetch_one(
+        "SELECT count(*) FROM pages WHERE workspace_id = %s", (workspace["id"],)
+    ) == (0,)
     for table in (
-        "item",
         "session",
         "password_reset_token",
         "email_verification_token",

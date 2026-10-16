@@ -28,14 +28,17 @@ def test_openapi_schema_describes_the_api(api: httpx.Client) -> None:
         "/auth/register",
         "/auth/login",
         "/users/me",
-        "/items",
-        "/items/{item_id}",
+        "/workspaces",
+        "/workspaces/{workspace_id}",
+        "/pages",
+        "/pages/{page_id}",
+        "/public/pages/{public_id}",
     } <= paths.keys()
-    # Regression: the list filters must be query parameters, not a GET body.
-    list_items = paths["/items"]["get"]
-    assert "requestBody" not in list_items
-    query_params = {p["name"] for p in list_items["parameters"] if p["in"] == "query"}
-    assert {"page", "size", "order_by", "name__ilike", "search"} <= query_params
+    # Regression: query parameters must not become a GET body.
+    search = paths["/workspaces/{workspace_id}/search"]["get"]
+    assert "requestBody" not in search
+    query_params = {p["name"] for p in search["parameters"] if p["in"] == "query"}
+    assert {"q", "limit"} <= query_params
 
 
 @pytest.mark.parametrize("path", ["/docs", "/redoc", "/docs/oauth2-redirect"])
@@ -48,7 +51,7 @@ def test_api_docs_pages_are_served(api: httpx.Client, path: str) -> None:
 
 def test_cors_preflight_allows_the_frontend_origin(api: httpx.Client) -> None:
     response = api.options(
-        "/items",
+        "/workspaces",
         headers={
             "Origin": FRONTEND_URL,
             "Access-Control-Request-Method": "POST",
@@ -65,7 +68,7 @@ def test_cors_preflight_allows_the_frontend_origin(api: httpx.Client) -> None:
 
 def test_cors_preflight_rejects_an_unknown_origin(api: httpx.Client) -> None:
     response = api.options(
-        "/items",
+        "/workspaces",
         headers={
             "Origin": "http://evil.example",
             "Access-Control-Request-Method": "POST",

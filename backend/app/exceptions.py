@@ -28,3 +28,14 @@ class HTTPExceptionMixin(HTTPException):
             detail=detail or self.detail,
             **kwargs,
         )
+
+
+class ForbiddenError(HTTPExceptionMixin):
+    """The user is authenticated and a member, but lacks the role for this.
+
+    The spec's contract for viewer writes (SPEC §2: 403 ``forbidden``).
+    """
+
+    detail = "You do not have permission to perform this action"
+    error_code = "forbidden"
+    status_code = 403

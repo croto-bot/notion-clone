@@ -8,7 +8,7 @@ FastAPI backend + React 19 frontend (TanStack Start) + PostgreSQL 18.1, run with
 | `frontend/` | React 19, TanStack Start/Router/Query, Tailwind v4, shadcn/ui, bun | [frontend/AGENTS.md](frontend/AGENTS.md) |
 | `db` | PostgreSQL 18.1 (`postgres:18.1-alpine`) | `docker-compose.yml` |
 
-Included: session auth (register, login, logout, password reset, email verification, Google OAuth), an example `items` CRUD feature, structured request logging, and two end-to-end test suites.
+Included: session auth (register, login, logout, password reset, email verification, Google OAuth), the Notion-clone feature set (workspaces with roles, a nested page tree with trash and favorites, databases with rows, comments, published public pages, real-time collaboration over WebSocket y-websocket, live workspace events), structured request logging, and two end-to-end test suites.
 
 **Working with an AI agent?** It starts at [AGENTS.md](AGENTS.md). Code standards for agents and people: `.claude/skills/project-standards/SKILL.md`.
 
