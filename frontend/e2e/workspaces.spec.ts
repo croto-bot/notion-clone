@@ -38,6 +38,10 @@ test.describe('workspaces (F2, F3, F17)', () => {
     expect((await updateWorkspace(api, user, created!.id, { name: 'Studio notes' })).name).toBe(
       'Studio notes'
     )
+    // The settings dialog is modal (it hides the app from screen readers): close it
+    // before the test drives the sidebar again.
+    await page.keyboard.press('Escape')
+    await expect(settings).toBeHidden()
 
     await openWorkspaceMenu(page)
     await page

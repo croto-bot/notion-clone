@@ -205,6 +205,7 @@ export function CommentThreadCard({ thread, pageId }: { thread: CommentThread; p
         <CommentComposer
           focusOnMount
           label="Reply"
+          sendLabel="Send reply"
           placeholder="Reply…"
           onSubmit={reply}
           onCancel={() => setReplying(false)}

@@ -6,6 +6,7 @@ import {
   getPage,
   getPublicPage,
   listRows,
+  mouseDrag,
   sidebar,
   updatePage,
 } from './fixtures'
@@ -94,7 +95,7 @@ test.describe('databases and publish (F13, F15)', () => {
     await page.getByRole('menuitem', { name: 'Board' }).click()
     await expect(page.getByTestId('database-board')).toBeVisible()
     const doneColumn = page.getByTestId('board-column').filter({ hasText: 'Done' })
-    await page.getByRole('button', { name: 'Drag Alpha' }).dragTo(doneColumn)
+    await mouseDrag(page, page.getByRole('button', { name: 'Drag Alpha' }), doneColumn)
     await expect
       .poll(async () => {
         const rows = await listRows(api, user, database.id)

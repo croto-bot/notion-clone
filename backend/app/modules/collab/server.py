@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from loguru import logger
+from pycrdt import create_awareness_message
 from pycrdt.websocket import WebsocketServer, YRoom, exception_logger
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -34,7 +35,7 @@ from app.dependencies import get_engine
 from app.modules.pages.yjs import extract_text
 
 if TYPE_CHECKING:
-    from pycrdt import Subscription
+    from pycrdt import Channel, Subscription
     from sqlalchemy.ext.asyncio import AsyncSession
 
 FLUSH_INTERVAL_S = 1.0
@@ -42,6 +43,28 @@ FLUSH_INTERVAL_S = 1.0
 
 def _session_factory() -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(bind=get_engine(), expire_on_commit=False)
+
+
+class PageRoom(YRoom):
+    """A room that also tells a new client who is already on the page.
+
+    ``YRoom.serve`` only relays awareness between clients, so a client that
+    connects later never learns the presence of the ones already in the room.
+    The y-websocket JS server sends the room's current awareness on connect;
+    this mirrors that behaviour.
+    """
+
+    async def serve(self, channel: Channel) -> None:
+        states = [
+            client_id
+            for client_id, state in self.awareness.states.items()
+            if client_id != self.awareness.client_id and state
+        ]
+        if states:
+            await channel.send(
+                create_awareness_message(self.awareness.encode_awareness_update(states))
+            )
+        await super().serve(channel)
 
 
 class CollabServer:
@@ -93,7 +116,7 @@ class CollabServer:
         async with self._lock:
             if room := self._server.rooms.get(name):
                 return room
-            room = YRoom(ready=False, exception_handler=exception_logger)
+            room = PageRoom(ready=False, exception_handler=exception_logger)
             if initial_state:
                 room.ydoc.apply_update(initial_state)
             room.ready = True

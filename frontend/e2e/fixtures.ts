@@ -32,6 +32,7 @@ import {
   type APIRequestContext,
   type APIResponse,
   type BrowserContext,
+  type Locator,
   type Page,
   type Request,
 } from '@playwright/test'
@@ -513,6 +514,21 @@ export function sidebarPage(page: Page, title: string) {
   return sidebar(page)
     .getByRole('treeitem')
     .filter({ has: page.getByRole('link', { name: title, exact: true }) })
+}
+
+/**
+ * Drags with real mouse moves. dnd-kit's PointerSensor needs the intermediate
+ * pointer events of a real drag: a single jump (locator.dragTo) can end the
+ * drag before the droppable under the pointer was ever computed.
+ */
+export async function mouseDrag(page: Page, source: Locator, target: Locator): Promise<void> {
+  const from = await source.boundingBox()
+  const to = await target.boundingBox()
+  if (!from || !to) throw new Error('drag source or target is not visible')
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 15 })
+  await page.mouse.up()
 }
 
 /** Opens the workspace menu at the top of the sidebar. */

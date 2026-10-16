@@ -51,12 +51,13 @@ function QuickFindPanel() {
 
   return (
     // The server filters; cmdk only moves the highlight (arrow keys, Enter).
-    <CommandPrimitive shouldFilter={false} loop label="Quick find" className="flex flex-col">
+    // cmdk wires the input to a hidden <label> with this text (and points
+    // aria-labelledby at it), so this is the input's accessible name.
+    <CommandPrimitive shouldFilter={false} loop label="Search pages" className="flex flex-col">
       <CommandInput
         value={query}
         onValueChange={setQuery}
         placeholder={`Search ${workspace.name}…`}
-        aria-label="Search pages"
       />
       <CommandList>
         {searching && !loading && results.length === 0 && <CommandEmpty>No results</CommandEmpty>}

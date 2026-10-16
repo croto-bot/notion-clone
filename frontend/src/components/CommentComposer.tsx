@@ -13,6 +13,8 @@ interface CommentComposerProps {
   focusOnMount?: boolean
   /** The accessible name of the box. */
   label: string
+  /** The accessible name of the send button. */
+  sendLabel?: string
   className?: string
 }
 
@@ -23,6 +25,7 @@ export function CommentComposer({
   onCancel,
   focusOnMount,
   label,
+  sendLabel = 'Send comment',
   className,
 }: CommentComposerProps) {
   const { data: me } = useCurrentUser()
@@ -85,7 +88,7 @@ export function CommentComposer({
       />
       <button
         type="button"
-        aria-label="Send comment"
+        aria-label={sendLabel}
         disabled={!canSend}
         onClick={() => void send()}
         className={cn(

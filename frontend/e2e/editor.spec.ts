@@ -104,6 +104,15 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
     await expect(
       page.locator('.bn-collaboration-cursor__label', { hasText: 'Blair' })
     ).toBeVisible()
+
+    // Both edits persist: a reload shows them straight from the stored document.
+    await other.reload()
+    const reloaded = other.getByTestId('editor')
+    await expect(reloaded).toContainText('Ada was here', { timeout: 15_000 })
+    await expect(reloaded).toContainText('Blair too')
+    await expect
+      .poll(async () => (await getDocument(api, user, note.id)).state, { timeout: 15_000 })
+      .not.toBeNull()
   })
 
   test('the sidebar updates when another member adds a page', async ({
@@ -129,6 +138,9 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
   }) => {
     await ensureWorkspace(api, user)
     await page.goto('/home')
+    // The shell mounts client-side: wait for it before the shortcuts, or the
+    // first keypress lands before the listeners exist.
+    await expect(page.getByTestId('workspace-name')).toBeVisible()
     await page.keyboard.press('Control+Backslash')
     await expect(page.getByTestId('sidebar')).toHaveAttribute('data-open', 'false')
     await page.keyboard.press('Control+Backslash')
@@ -169,8 +181,8 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
     expect((await listComments(api, user, note.id)).map(item => item.body)).toContain('Looks good')
 
     await thread.getByRole('button', { name: 'Reply…' }).click()
-    await panel.getByLabel('Reply').fill('Thanks')
-    await panel.getByRole('button', { name: 'Send comment' }).click()
+    await panel.getByRole('textbox', { name: 'Reply' }).fill('Thanks')
+    await panel.getByRole('button', { name: 'Send reply' }).click()
     await expect(panel.getByText('Thanks')).toBeVisible()
 
     await thread.hover()
@@ -185,7 +197,12 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
 
     const resolved = panel.getByRole('article').filter({ hasText: 'Looks good' })
     await resolved.hover()
-    await resolved.getByRole('button', { name: 'Comment options' }).click()
+    // Only the root comment says "Looks good" (the reply says "Thanks").
+    await resolved
+      .getByTestId('comment')
+      .filter({ hasText: 'Looks good' })
+      .getByRole('button', { name: 'Comment options' })
+      .click()
     await page.getByRole('menuitem', { name: 'Delete comment' }).click()
     await expect(resolved).toBeHidden()
     const seeded = await createComment(api, user, note.id, { body: 'Seed' })

@@ -292,7 +292,8 @@ test.describe('session (F1)', () => {
     await logOut(page)
 
     await expect(page).toHaveURL('/login')
-    expect(await storedToken(page)).toBeNull()
+    // The app leaves the page first, then clears the token: poll for it.
+    await expect.poll(() => storedToken(page)).toBeNull()
     expect((await api.get('/users/me', { headers: authHeaders(user) })).status()).toBe(401)
 
     await page.goto('/home')

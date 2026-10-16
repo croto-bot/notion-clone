@@ -8,6 +8,7 @@ import {
   getPage,
   listFavorites,
   listTrash,
+  mouseDrag,
   movePage,
   pageTree,
   purgePage,
@@ -36,9 +37,7 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
       title: 'Child',
     })
     await expect(sidebarPage(page, 'Child')).toBeVisible()
-    await sidebarPage(page, 'Child').dragTo(sidebarPage(page, 'Parent'), {
-      targetPosition: { x: 48, y: 14 },
-    })
+    await mouseDrag(page, sidebarPage(page, 'Child'), sidebarPage(page, 'Parent'))
     await expect.poll(async () => (await getPage(api, user, child.id)).parent_id).toBe(parent!.id)
 
     await page.goto(`/p/${child.id}`)
@@ -158,9 +157,16 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     const workspace = await ensureWorkspace(api, user)
     const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Needle' })
     await page.goto('/home')
+    // The shortcut listener mounts with the client-side shell.
+    await expect(page.getByTestId('workspace-name')).toBeVisible()
     await page.keyboard.press('Control+k')
-    await page.getByLabel('Search pages').fill('Needle')
-    await page.getByRole('option', { name: /Needle/ }).click()
+    const quickFind = page.getByRole('dialog', { name: 'Quick find' })
+    await expect(quickFind).toBeVisible()
+    // Arrow keys move the highlight and Enter opens the page, like Notion.
+    await quickFind.getByLabel('Search pages').fill('Needle')
+    await expect(quickFind.getByRole('option', { name: /Needle/ })).toBeVisible()
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
     await expect(page).toHaveURL(`/p/${note.id}`)
     expect((await searchPages(api, user, workspace.id, 'Needle')).map(item => item.id)).toContain(
       note.id

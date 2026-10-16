@@ -52,7 +52,11 @@ import { toastApiError } from '@/lib/error-handler'
 import { cn } from '@/lib/utils'
 import { ROLES, type Member, type Role } from '@/types/workspace'
 
-const ROLE_LABEL: Record<Role, string> = { owner: 'Owner', editor: 'Editor', viewer: 'Viewer' }
+const ROLE_LABEL: Record<Role, string> = {
+  owner: 'Full access',
+  editor: 'Can edit',
+  viewer: 'Can view',
+}
 const ROLE_HELP: Record<Role, string> = {
   owner: 'Full access. Manages members and can delete the workspace.',
   editor: 'Can edit pages and databases.',

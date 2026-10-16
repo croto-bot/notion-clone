@@ -97,10 +97,10 @@ export function Sidebar() {
             </button>
           </Tip>
           {canEdit && (
-            <Tip label="Create a new page" side="bottom">
+            <Tip label="Create a page" side="bottom">
               <button
                 type="button"
-                aria-label="New page"
+                aria-label="Create a page"
                 onClick={() => void createPage()}
                 className="text-muted-foreground hover:bg-hover-strong grid size-6 shrink-0 place-items-center rounded-[4px] transition-colors duration-100"
               >
