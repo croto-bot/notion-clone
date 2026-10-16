@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     import httpx
 
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 from tests.e2e.stack import SERVER_DB_POOL_SIZE
 
 DEFAULT_PASSWORD = "correct-horse-battery-staple"
+WS_TIMEOUT_S = 5.0
 EXPIRED = "2000-01-01 00:00:00+00"
 # JSON allows "\u0000" in strings; Postgres text cannot store it.
 NUL = "\u0000"
@@ -58,16 +59,77 @@ def assert_error(
     return body
 
 
-def create_item(
-    client: httpx.Client, name: str = "Item", description: str | None = None
+def create_workspace(
+    client: httpx.Client, name: str = "E2E Workspace", icon: str | None = None
 ) -> dict[str, Any]:
-    """Create an item through POST /items and return the response body."""
+    """Create a workspace through POST /workspaces and return the body."""
     payload: dict[str, Any] = {"name": name}
-    if description is not None:
-        payload["description"] = description
-    response = client.post("/items", json=payload)
+    if icon is not None:
+        payload["icon"] = icon
+    response = client.post("/workspaces", json=payload)
     assert response.status_code == 201, response.text
     return response.json()
+
+
+# Sentinel so tests can pass an explicit after_id=None (= first, SPEC §3).
+UNSET: Any = object()
+
+
+def create_page(
+    client: httpx.Client,
+    workspace_id: str,
+    *,
+    parent_id: str | None = None,
+    title: str = "Page",
+    kind: str = "page",
+    after_id: Any = UNSET,
+    icon: str | None = None,
+    properties: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create a page through POST /pages and return the response body."""
+    payload: dict[str, Any] = {
+        "workspace_id": workspace_id,
+        "title": title,
+        "kind": kind,
+    }
+    if parent_id is not None:
+        payload["parent_id"] = parent_id
+    if after_id is not UNSET:
+        payload["after_id"] = after_id
+    if icon is not None:
+        payload["icon"] = icon
+    if properties is not None:
+        payload["properties"] = properties
+    response = client.post("/pages", json=payload)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def add_member(
+    owner_client: httpx.Client,
+    workspace_id: str,
+    user: RegisteredUser,
+    role: str = "editor",
+) -> dict[str, Any]:
+    """The owner adds a registered user to the workspace; returns the member."""
+    response = owner_client.post(
+        f"/workspaces/{workspace_id}/members",
+        json={"email": user.email, "role": role},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def make_member(
+    register_user: Callable[..., RegisteredUser],
+    owner_client: httpx.Client,
+    workspace_id: str,
+    role: str = "editor",
+) -> RegisteredUser:
+    """Register a user and add them to the workspace with the given role."""
+    user = register_user()
+    add_member(owner_client, workspace_id, user, role=role)
+    return user
 
 
 def login(api: httpx.Client, email: str, password: str) -> httpx.Response:
@@ -185,3 +247,128 @@ def _wait_until_server_connections_are_idle(db: Database) -> None:
     ):
         assert time.monotonic() < deadline, "the server's connections stay busy"
         time.sleep(0.01)
+
+
+# --- WebSocket helpers (the collab and events sockets) ------------------------
+
+
+def ws_connect(server: Any, path: str, token: str | None = None) -> Any:
+    """Open a sync WebSocket to the live server; returns the connection.
+
+    ``server`` is the ``server`` fixture (``.base_url``).
+    """
+    from websockets.sync.client import connect
+
+    url = server.base_url.replace("http://", "ws://") + path
+    if token is not None:
+        url += f"?token={token}"
+    return connect(url, open_timeout=WS_TIMEOUT_S)
+
+
+def ws_close_code(exc: Any) -> int:
+    """The close code of a websockets ConnectionClosed error."""
+    assert exc.rcvd is not None, exc
+    return int(exc.rcvd.code)
+
+
+# --- y-websocket client protocol (built with pycrdt, like the server) ---------
+
+
+def yjs_sync(connection: Any, doc: Any) -> None:
+    """Run the y-websocket initial sync against the room.
+
+    Answers the server's sync step 1 with this doc's state, then asks for the
+    server's state (step 1 from us) and applies its step 2 reply.
+    """
+    from pycrdt import create_sync_message, handle_sync_message
+
+    step1 = connection.recv(timeout=WS_TIMEOUT_S)
+    assert isinstance(step1, bytes) and step1[0] == 0, step1  # SYNC
+    reply = handle_sync_message(step1[1:], doc)
+    if reply is not None:
+        connection.send(reply)
+    connection.send(create_sync_message(doc))
+    deadline = time.monotonic() + WS_TIMEOUT_S
+    while time.monotonic() < deadline:
+        message = connection.recv(timeout=WS_TIMEOUT_S)
+        assert isinstance(message, bytes) and message[0] == 0, message
+        reply = handle_sync_message(message[1:], doc)
+        if reply is not None:
+            connection.send(reply)
+        if reply is None:
+            return  # step 2 applied: the doc now holds the room's state
+    raise AssertionError("the server never sent its document state")
+
+
+def yjs_send_update(connection: Any, doc: Any) -> None:
+    """Send this doc's current state as a y-websocket update message."""
+    from pycrdt import create_update_message
+
+    connection.send(create_update_message(doc.get_update()))
+
+
+def yjs_recv_update(
+    connection: Any, doc: Any, *, timeout: float = WS_TIMEOUT_S
+) -> bytes:
+    """Receive and apply the next document message (skips awareness)."""
+    from pycrdt import handle_sync_message
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        message = connection.recv(timeout=WS_TIMEOUT_S)
+        if not (isinstance(message, bytes) and message[0] == 0):
+            continue  # awareness or a ping: not a document message
+        reply = handle_sync_message(message[1:], doc)
+        if reply is not None:
+            connection.send(reply)
+        return message
+    raise TimeoutError("no document message arrived")
+
+
+def yjs_wait_for(
+    connection: Any, doc: Any, needle: str, *, timeout: float = 5.0
+) -> None:
+    """Apply document messages until ``needle`` appears in the doc's text.
+
+    A sync round delivers several messages (step 2 replies, updates); waiting
+    for the content avoids depending on how the server splits them.
+    """
+    from pycrdt import XmlFragment, handle_sync_message
+
+    fragment = doc.get("document-store", type=XmlFragment)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if needle in str(fragment):
+            return
+        message = connection.recv(timeout=WS_TIMEOUT_S)
+        if not (isinstance(message, bytes) and message[0] == 0):
+            continue  # awareness or a ping
+        reply = handle_sync_message(message[1:], doc)
+        if reply is not None:
+            connection.send(reply)
+    raise TimeoutError(f"{needle!r} never arrived in the document")
+
+
+def yjs_send_awareness(connection: Any, doc: Any, name: str, **fields: Any) -> None:
+    """Send an awareness update (cursor/name), like a real editor client."""
+    from pycrdt import Awareness, create_awareness_message
+
+    awareness = Awareness(doc)
+    awareness.set_local_state({"user": {"name": name, **fields}})
+    connection.send(
+        create_awareness_message(
+            awareness.encode_awareness_update([awareness.client_id])
+        )
+    )
+
+
+def doc_with_text(*paragraph_texts: str) -> tuple[Any, bytes]:
+    """Return (doc, update bytes) with the paragraphs in document-store."""
+    from pycrdt import Doc, XmlElement, XmlFragment, XmlText
+
+    doc = Doc()
+    fragment = doc.get("document-store", type=XmlFragment)
+    with doc.transaction():
+        for text in paragraph_texts:
+            fragment.children.append(XmlElement("p", contents=[XmlText(text)]))
+    return doc, doc.get_update()
