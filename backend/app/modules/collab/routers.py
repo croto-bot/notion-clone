@@ -67,6 +67,8 @@ async def collab_socket(
     # hours, and its request-scoped session must not hold locks that long.
     await session.commit()
     await websocket.accept()
+    # Logged at accept: the connection succeeded, however long it stays open.
+    log_socket(PATH_TEMPLATE, path, 200)
     room = await collab_server.get_room(page_id, page.ydoc_state)
     base = StarletteChannel(websocket, str(page_id))
     channel: Channel  # noqa: F821  (TYPE_CHECKING import; runtime is a channel wrapper)
@@ -85,4 +87,3 @@ async def collab_socket(
         if not read_only:
             # The last disconnect persists right away (no debounce wait).
             await collab_server.flush_page(page_id)
-        log_socket(PATH_TEMPLATE, path, 200)

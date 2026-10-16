@@ -1,10 +1,12 @@
 """Workspace events WebSocket: one JSON event per change (SPEC §WebSockets)."""
 
+import asyncio
+import contextlib
 import json
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, WebSocket
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.websockets import (
@@ -54,14 +56,25 @@ async def workspace_events(
     # hours, and its request-scoped session must not hold locks that long.
     await session.commit()
     await websocket.accept()
+    # Logged at accept: the connection succeeded, however long it stays open.
+    log_socket(PATH_TEMPLATE, path, 200)
     queue = event_bus.subscribe(workspace_id)
-    try:
+
+    async def deliver() -> None:
         while True:
             event = await queue.get()
             await websocket.send_text(json.dumps(event))
-    except Exception:
-        # The client went away or the socket broke: stop delivering.
+
+    sender = asyncio.create_task(deliver())
+    try:
+        # Clients send nothing; reading is how the server sees the close at
+        # once, instead of on the next event (which may never come).
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
         pass
     finally:
+        sender.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await sender
         event_bus.unsubscribe(workspace_id, queue)
-        log_socket(PATH_TEMPLATE, path, 200)
