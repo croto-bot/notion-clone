@@ -11,6 +11,7 @@ from tests.e2e.helpers import (
     EXPIRED,
     NUL,
     assert_error,
+    create_workspace,
     deactivate_user,
     drop_server_connections,
     login,
@@ -36,12 +37,15 @@ PROTECTED_ROUTES: list[tuple[str, str, dict[str, Any] | None]] = [
     ("DELETE", "/users/me", None),
     ("POST", "/auth/logout/all", None),
     ("POST", "/auth/email/verify", None),
-    ("GET", "/items", None),
-    ("POST", "/items", {"name": "x"}),
-    ("GET", f"/items/{SOME_ID}", None),
-    ("PATCH", f"/items/{SOME_ID}", {"name": "x"}),
-    ("DELETE", f"/items/{SOME_ID}", None),
-    ("GET", "/items/by-sku/SKU-1", None),
+    ("GET", "/workspaces", None),
+    ("POST", "/workspaces", {"name": "x"}),
+    ("GET", f"/workspaces/{SOME_ID}", None),
+    ("GET", f"/workspaces/{SOME_ID}/members", None),
+    ("POST", "/pages", {"workspace_id": SOME_ID}),
+    ("GET", f"/pages/{SOME_ID}", None),
+    ("PATCH", f"/pages/{SOME_ID}", {"title": "x"}),
+    ("DELETE", f"/pages/{SOME_ID}", None),
+    ("GET", f"/pages/{SOME_ID}/comments", None),
 ]
 
 
@@ -127,7 +131,7 @@ def test_session_of_deactivated_user_is_401_inactive_user(
     user = register_user()
     deactivate_user(db, user.id)
 
-    response = user.client.get("/items")
+    response = user.client.get("/workspaces")
 
     assert_error(response, 401, "inactive_user", "User is not allowed to login")
 
@@ -165,11 +169,8 @@ def test_unknown_session_401_carries_cors_headers(
 # Every input that reaches a text column or a text comparison in Postgres:
 # (method, path, JSON body). Postgres text cannot store a NUL character.
 NUL_INPUTS: list[tuple[str, str, dict[str, Any] | None]] = [
-    ("POST", "/items", {"name": f"a{NUL}b"}),
+    ("POST", "/workspaces", {"name": f"a{NUL}b"}),
     ("PATCH", "/users/me", {"display_name": f"a{NUL}b"}),
-    ("GET", "/items/by-sku/%00", None),
-    ("GET", "/items?search=%00", None),
-    ("GET", "/items?name__ilike=%00", None),
     ("POST", "/auth/login", {"email": f"a{NUL}@example.com", "password": "x"}),
     ("POST", "/auth/password/confirm", {"token": NUL, "new_password": "long-enough"}),
     ("POST", "/auth/email/verify/confirm", {"token": NUL}),
@@ -186,8 +187,27 @@ def test_nul_character_is_rejected_with_422(
         response, 422, "validation_error", "Text must not contain NUL characters"
     )
     # Nothing was stored, and the connection stays usable.
-    assert auth_client.get("/items").json()["total"] == 0
+    assert auth_client.get("/workspaces").json() == []
     assert auth_client.get("/users/me").json()["display_name"] == "E2E User"
+
+
+@pytest.mark.parametrize(
+    "path", ["/pages", "/workspaces/{id}/search", "/workspaces/{id}/trash"]
+)
+def test_nul_character_in_owned_routes_is_422(
+    auth_client: httpx.Client, path: str
+) -> None:
+    workspace = create_workspace(auth_client)
+    route = path.format(id=workspace["id"])
+    if path == "/pages":
+        body = {"workspace_id": workspace["id"], "title": f"a{NUL}b"}
+        response = auth_client.post(route, json=body)
+    else:
+        response = auth_client.get(route, params={"q": NUL})
+
+    assert_error(
+        response, 422, "validation_error", "Text must not contain NUL characters"
+    )
 
 
 def test_register_with_a_nul_character_creates_no_account(api: httpx.Client) -> None:

@@ -104,8 +104,8 @@ with `page`, `size`) unless marked **(not paged)**.
 | POST | `/pages/{id}/restore` | | `PageResponse`. Restores the subtree; when the parent is still in the trash or gone, the page goes to the root |
 | DELETE | `/pages/{id}/permanent` | | 204. Only trashed pages (else 409 `not_in_trash`) |
 | GET | `/pages/{id}/rows` | | **(not paged)** `PageResponse[]` (without breadcrumbs: `[]`) of a database's non-trashed rows, by position. 400 `not_a_database` for normal pages |
-| GET | `/pages/{id}/document` | | `{state: base64 | null}`: the stored Yjs update |
-| PUT | `/pages/{id}/document` | `{state: base64}` | `{state}`. Merges the update into the stored document (used by Markdown import before the editor connects, and by tests). Viewer = 403 |
+| GET | `/pages/{id}/document` | | `{state: base64 | null}`: the stored Yjs update (the live collab room's state when a socket is connected, else `ydoc_state`) |
+| PUT | `/pages/{id}/document` | `{state: base64}` | `{state}`. Merges the update into the stored document (used by Markdown import before the editor connects, and by tests). Viewer = 403, trashed page = 400 `page_in_trash` |
 | PUT | `/pages/{id}/favorite` | | 204 |
 | DELETE | `/pages/{id}/favorite` | | 204 |
 | GET | `/pages/{id}/comments` | | **(not paged)** `CommentResponse[]` oldest first = `{id, page_id, parent_id, body, resolved, edited, author: {id, display_name, email}, created_at, updated_at}` |
@@ -119,13 +119,30 @@ with `page`, `size`) unless marked **(not paged)**.
 |---|---|---|
 | GET | `/public/pages/{public_id}` | `PublicPageResponse` = `{id, title, icon, cover, cover_position, full_width, small_text, font, kind, state (base64 Yjs | null), database_schema, database_views, rows (for databases: `[{id, title, icon, properties}]`), children: [{id, title, icon, public_id}] (public children only)}`. 404 when not published or trashed |
 
+### Error codes the backend adds to this section's tables
+
+These codes are part of the contract (the tables above name them where they apply):
+
+| Case | Status | `error_code` |
+|---|---|---|
+| Viewer write, or a non-owner doing an owner-only change | 403 | `forbidden` |
+| Adding a member whose email is not a registered user | 404 | `user_not_found` |
+| Adding a user who is already a member | 409 | `already_member` |
+| The last owner leaving or losing the `owner` role | 409 | `last_owner` |
+| Moving a page into itself, its own subtree, a trashed page, or a page of another workspace | 400 | `invalid_move` |
+| Any write on a trashed page: `PATCH /pages/{id}`, move, duplicate, comment create, favorite, `PUT .../document` | 400 | `page_in_trash` |
+| Restore or permanent-delete of a page that is not in the trash | 409 | `not_in_trash` |
+| `GET /pages/{id}/rows` on a page that is not a database | 400 | `not_a_database` |
+
+Placement clarifications: without `after_id` a new or moved page goes **last**; an explicit `"after_id": null` puts it **first** (create and move behave the same). A create whose `parent_id` is missing, in another workspace, or in the trash gets a 404.
+
 ### WebSockets
 
-Auth: `?token=<session token>` in the query string (browsers cannot set headers on WebSocket). A bad token closes with code `4401`; no access closes with `4404`.
+Auth: `?token=<session token>` in the query string (browsers cannot set headers on WebSocket). A bad token closes with code `4401`; no access closes with `4404`. Membership is checked when the socket connects (removing a member later does not cut an open socket; it fails on the next connect).
 
 | Path | Protocol |
 |---|---|
-| `WS /pages/{id}/collab?token=` | y-websocket sync + awareness protocol (room = page id). Server: `pycrdt` + `pycrdt-websocket`. The server loads `ydoc_state`, applies updates, stores the full state again (debounced about 1 s and on the last disconnect), extracts plain text to `content_text`, and sets `last_edited_*`. Viewers and trashed pages: the server drops their document updates (awareness still works). |
+| `WS /pages/{id}/collab?token=` | y-websocket sync + awareness protocol (room = page id). Server: `pycrdt` + `pycrdt-websocket`. The server loads `ydoc_state`, applies updates, stores the full state again (debounced about 1 s and on the last editor's disconnect), extracts plain text to `content_text`, and sets `last_edited_*` to the user who most recently sent a document update. Viewers and trashed pages are read-only: the server drops their state-pushing messages (sync step 2 and updates; sync step 1 still answers, so they receive the document, and awareness flows both ways). Rooms live for the process lifetime; a page without a connected socket reads and writes `ydoc_state` directly. |
 | `WS /workspaces/{id}/events?token=` | Server -> client JSON events, one per change in the workspace: `{type, page_id?, actor_id}` with `type` in `page.created`, `page.updated`, `page.moved`, `page.deleted`, `page.restored`, `page.purged`, `comment.changed`, `members.changed`, `workspace.updated`. In-process pub/sub (one backend process). The client invalidates the matching queries. |
 
 The frontend document: BlockNote's Yjs binding uses the `XmlFragment` named `document-store`. Text extraction on the server reads that fragment.

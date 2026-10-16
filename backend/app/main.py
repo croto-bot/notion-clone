@@ -111,16 +111,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     The database engine is created on first use via get_engine() in app/dependencies,
     which uses lru_cache to ensure singleton behavior. This lifespan function
-    ensures the engine is properly disposed on shutdown.
+    ensures the engine is properly disposed on shutdown. The collaboration
+    server (page y-websocket rooms, with its debounced persistence loop)
+    starts with the app and stops on shutdown, persisting every live room.
     """
-    # Trigger engine creation to verify database connection during startup
     from app.dependencies import get_engine
+    from app.modules.collab.server import get_collab_server
 
     engine = get_engine()
+    collab_server = get_collab_server()
+    await collab_server.start()
 
     yield
 
-    # Shutdown: Close database connections
+    # Shutdown: persist the collab rooms, then close database connections
+    await collab_server.stop()
     await engine.dispose()
 
 

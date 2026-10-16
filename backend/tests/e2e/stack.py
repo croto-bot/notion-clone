@@ -59,6 +59,12 @@ SERVER_DB_POOL_SIZE = 5
 # One wide event (canonical log line) is emitted per request with this message.
 WIDE_EVENT_MESSAGE = "request_completed"
 
+# One line per WebSocket connection (app.core.websockets.log_socket): the
+# WideEventMiddleware only sees HTTP, so the WS endpoints log this themselves.
+# Like a wide event, it carries method/path_template/status_code, so the
+# route-coverage guard can see WebSocket routes too.
+WEBSOCKET_EVENT_MESSAGE = "websocket_completed"
+
 
 def postgres_image() -> str:
     """Return the Postgres image of the ``db`` service in docker-compose.yml."""
@@ -275,6 +281,17 @@ class ServerLog:
                 route = event.get("path_template") or event.get("path", "")
                 self.route_hits.add(
                     (event.get("method", ""), route, int(event.get("status_code", 0)))
+                )
+            elif event["message"] == WEBSOCKET_EVENT_MESSAGE:
+                # A WebSocket connection logged by its endpoint: method is
+                # "WEBSOCKET" and status < 400 means it was served.
+                route = event.get("path_template") or event.get("path", "")
+                self.route_hits.add(
+                    (
+                        event.get("method", "WEBSOCKET"),
+                        route,
+                        int(event.get("status_code", 0)),
+                    )
                 )
 
     def mark(self) -> int:
