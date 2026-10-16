@@ -311,3 +311,89 @@
 .nx-editor .bn-editor ::selection {
   background: rgba(45, 170, 219, 0.3);
 }
+
+/* ---------- Menus of the editor: Notion's slash menu, toolbar and dropdowns ---------- */
+.nx-editor .bn-suggestion-menu,
+.nx-editor .bn-toolbar,
+.nx-editor .bn-menu-dropdown,
+.nx-editor .mantine-Menu-dropdown,
+.nx-editor .bn-panel,
+.nx-editor .bn-popover-content {
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: none;
+  border-radius: 6px;
+  box-shadow: var(--menu-shadow);
+}
+.nx-editor .bn-suggestion-menu {
+  width: 324px;
+  max-height: min(330px, 60vh);
+  padding: 6px 0;
+  overflow-y: auto;
+}
+.nx-editor .bn-suggestion-menu-label {
+  padding: 6px 14px 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--subtle);
+  background: transparent;
+}
+.nx-editor .bn-suggestion-menu-item {
+  min-height: 45px;
+  padding: 2px 14px;
+  gap: 12px;
+  border-radius: 0;
+  background: transparent;
+  transition: background-color 60ms ease;
+}
+.nx-editor .bn-suggestion-menu-item[aria-selected='true'],
+.nx-editor .bn-suggestion-menu-item:hover {
+  background: var(--hover-strong);
+}
+.nx-editor .bn-mt-suggestion-menu-item-section[data-position='left'] {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  border: 1px solid var(--pressed);
+  border-radius: 4px;
+  background: var(--background);
+  color: var(--foreground);
+}
+.nx-editor .bn-mt-suggestion-menu-item-body {
+  flex: 1;
+  min-width: 0;
+}
+.nx-editor .bn-mt-suggestion-menu-item-title {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.3;
+  color: var(--foreground);
+}
+.nx-editor .bn-mt-suggestion-menu-item-subtitle {
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--muted-foreground);
+}
+.nx-editor .bn-mt-suggestion-menu-item-section[data-position='right'] .mantine-Badge-root {
+  background: transparent;
+  color: var(--subtle);
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: none;
+  padding: 0;
+  height: auto;
+}
+.nx-editor .bn-toolbar {
+  padding: 2px;
+}
+.nx-editor .bn-toolbar .mantine-Button-root {
+  border-radius: 4px;
+  color: var(--foreground);
+}
+.nx-editor .bn-toolbar .mantine-Button-root:hover,
+.nx-editor .bn-toolbar .mantine-Button-root[data-active] {
+  background: var(--hover-strong);
+}

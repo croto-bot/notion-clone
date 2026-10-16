@@ -1,5 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query'
-import type { PageResponse, PageSummary } from '@/types/page'
+import type { PageResponse, PageSummary, UpdatePageData } from '@/types/page'
 import { queryKeys } from '@/lib/query-keys'
 
 /** Prefixes of every query that lists page summaries. */
@@ -43,4 +43,27 @@ export function storePageResponse(queryClient: QueryClient, page: PageResponse) 
     updated_at: page.updated_at,
     last_edited_at: page.last_edited_at,
   })
+}
+
+/** Shows a change of row values, schema or views before the server answers. */
+export function patchPageContent(
+  queryClient: QueryClient,
+  id: string,
+  data: Pick<UpdatePageData, 'properties' | 'database_schema' | 'database_views'>
+) {
+  if (data.properties !== undefined) {
+    const properties = data.properties
+    queryClient.setQueriesData<PageResponse[]>({ queryKey: ['pages', 'rows'] }, rows =>
+      rows?.map(row => (row.id === id ? { ...row, properties } : row))
+    )
+  }
+  const content: Partial<PageResponse> = {}
+  if (data.properties !== undefined) content.properties = data.properties
+  if (data.database_schema !== undefined) content.database_schema = data.database_schema
+  if (data.database_views !== undefined) content.database_views = data.database_views
+  if (Object.keys(content).length > 0) {
+    queryClient.setQueryData<PageResponse>(queryKeys.pages.detail(id), old =>
+      old ? { ...old, ...content } : old
+    )
+  }
 }

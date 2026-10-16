@@ -36,6 +36,8 @@ interface SlashItemSpec {
   aliases: string[]
   group: string
   icon: JSX.Element
+  /** The Markdown shortcut shown on the right, like Notion's. */
+  hint?: string
 }
 
 const BASIC = 'Basic blocks'
@@ -60,6 +62,7 @@ const SPECS: SlashItemSpec[] = [
   },
   {
     key: 'check_list',
+    hint: '[]',
     title: 'To-do list',
     subtext: 'Track tasks with a to-do list.',
     aliases: ['todo', 'to-do', 'task', 'checkbox', 'check', 'list'],
@@ -68,6 +71,7 @@ const SPECS: SlashItemSpec[] = [
   },
   {
     key: 'heading',
+    hint: '#',
     title: 'Heading 1',
     subtext: 'Big section heading.',
     aliases: ['h1', 'heading', 'heading1', 'title', 'big'],
@@ -76,6 +80,7 @@ const SPECS: SlashItemSpec[] = [
   },
   {
     key: 'heading_2',
+    hint: '##',
     title: 'Heading 2',
     subtext: 'Medium section heading.',
     aliases: ['h2', 'heading2', 'subtitle', 'medium'],
@@ -84,6 +89,7 @@ const SPECS: SlashItemSpec[] = [
   },
   {
     key: 'heading_3',
+    hint: '###',
     title: 'Heading 3',
     subtext: 'Small section heading.',
     aliases: ['h3', 'heading3', 'small'],
@@ -100,6 +106,7 @@ const SPECS: SlashItemSpec[] = [
   },
   {
     key: 'bullet_list',
+    hint: '-',
     title: 'Bulleted list',
     subtext: 'Create a simple bulleted list.',
     aliases: ['bullet', 'bulleted', 'ul', 'list', 'unordered'],
@@ -108,6 +115,7 @@ const SPECS: SlashItemSpec[] = [
   },
   {
     key: 'numbered_list',
+    hint: '1.',
     title: 'Numbered list',
     subtext: 'Create a list with numbering.',
     aliases: ['number', 'numbered', 'ol', 'list', 'ordered'],
@@ -116,6 +124,7 @@ const SPECS: SlashItemSpec[] = [
   },
   {
     key: 'toggle_list',
+    hint: '>',
     title: 'Toggle list',
     subtext: 'Toggles can hide and show content inside.',
     aliases: ['toggle', 'collapse', 'details', 'list'],
@@ -124,6 +133,7 @@ const SPECS: SlashItemSpec[] = [
   },
   {
     key: 'quote',
+    hint: '"',
     title: 'Quote',
     subtext: 'Capture a quote.',
     aliases: ['quote', 'blockquote', 'citation'],
@@ -132,6 +142,7 @@ const SPECS: SlashItemSpec[] = [
   },
   {
     key: 'divider',
+    hint: '---',
     title: 'Divider',
     subtext: 'Visually divide blocks.',
     aliases: ['divider', 'hr', 'line', 'separator', 'rule'],
@@ -148,6 +159,7 @@ const SPECS: SlashItemSpec[] = [
   },
   {
     key: 'code_block',
+    hint: '```',
     title: 'Code',
     subtext: 'Capture a code snippet.',
     aliases: ['code', 'snippet', 'pre', 'codeblock'],
@@ -201,6 +213,7 @@ export function useSlashMenuItems(editor: Editor, pageId: string) {
         aliases: spec.aliases,
         group: spec.group,
         icon: spec.icon,
+        badge: spec.hint,
       }
       if (spec.key === 'page' || spec.key === 'database') {
         items.push({
@@ -216,8 +229,7 @@ export function useSlashMenuItems(editor: Editor, pageId: string) {
         })
       } else {
         const original = defaults.get(spec.key)
-        if (original)
-          items.push({ ...base, badge: original.badge, onItemClick: original.onItemClick })
+        if (original) items.push({ ...base, onItemClick: original.onItemClick })
       }
     }
     return items

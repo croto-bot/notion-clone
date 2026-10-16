@@ -477,6 +477,16 @@ export async function deleteComment(
   await expectOk(response, `DELETE /comments/${commentId}`)
 }
 
+/** y-websocket room for one page: `WS /pages/{id}/collab`. */
+export function pageCollabPath(pageId: string): string {
+  return `/pages/${pageId}/collab`
+}
+
+/** Workspace events socket: `WS /workspaces/{id}/events`. */
+export function workspaceEventsPath(workspaceId: string): string {
+  return `/workspaces/${workspaceId}/events`
+}
+
 /** `GET /public/pages/{public_id}` (no session). */
 export async function getPublicPage(api: APIRequestContext, publicId: string): Promise<PublicPage> {
   const response = await api.get(`/public/pages/${publicId}`)

@@ -10,6 +10,7 @@ import { API, buildRecentUrl, buildSearchUrl, buildTrashUrl } from '@/lib/api-en
 import { queryKeys } from '@/lib/query-keys'
 import {
   invalidatePageLists,
+  patchPageContent,
   patchPageEverywhere,
   storePageResponse,
 } from '@/features/pages/page-cache'
@@ -17,6 +18,7 @@ import { moveInList, removeSubtree } from '@/features/pages/page-tree'
 import type {
   CreatePageData,
   MovePageData,
+  DocumentResponse,
   PageResponse,
   PageSummary,
   SearchResult,
@@ -110,6 +112,7 @@ export function useUpdatePage() {
     mutationFn: ({ id, data }: { id: string; data: UpdatePageData }) =>
       api.patch<PageResponse>(API.PAGES.DETAIL(id), data),
     onMutate: ({ id, data }) => {
+      patchPageContent(queryClient, id, data)
       const patch: Parameters<typeof patchPageEverywhere>[2] = {}
       if (data.title !== undefined) patch.title = data.title
       if (data.icon !== undefined) patch.icon = data.icon
@@ -187,9 +190,15 @@ export function useDeletePage() {
       queryClient.setQueriesData<PageSummary[]>({ queryKey: ['pages', 'favorites'] }, old =>
         old?.filter(page => page.id !== id)
       )
+      queryClient.setQueriesData<PageResponse[]>({ queryKey: ['pages', 'rows'] }, old =>
+        old?.filter(row => row.id !== id)
+      )
       return { snapshot }
     },
-    onError: (_error, _id, context) => restoreLists(queryClient, context?.snapshot),
+    onError: (_error, _id, context) => {
+      restoreLists(queryClient, context?.snapshot)
+      void queryClient.invalidateQueries({ queryKey: ['pages', 'rows'] })
+    },
     onSettled: (_data, _error, id) => {
       invalidatePageLists(queryClient)
       void queryClient.invalidateQueries({ queryKey: queryKeys.pages.detail(id) })
@@ -216,6 +225,13 @@ export function usePurgePage() {
       queryClient.removeQueries({ queryKey: queryKeys.pages.detail(id) })
       invalidatePageLists(queryClient)
     },
+  })
+}
+
+export function usePutDocument() {
+  return useMutation({
+    mutationFn: ({ id, state }: { id: string; state: string }) =>
+      api.put<DocumentResponse>(API.PAGES.DOCUMENT(id), { state }),
   })
 }
 

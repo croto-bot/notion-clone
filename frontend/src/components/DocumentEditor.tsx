@@ -41,7 +41,7 @@ function CollabEditor({ page, session, editable }: CollabEditorProps) {
         provider: session.provider,
         fragment: session.doc.getXmlFragment(DOCUMENT_FRAGMENT),
         user: session.user,
-        showCursorLabels: 'activity',
+        showCursorLabels: 'always',
       },
     }),
     [session.doc, session.provider]

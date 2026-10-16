@@ -27,6 +27,7 @@ export const API = {
     RESTORE: (id: string) => `/pages/${id}/restore`,
     PERMANENT: (id: string) => `/pages/${id}/permanent`,
     ROWS: (id: string) => `/pages/${id}/rows`,
+    DOCUMENT: (id: string) => `/pages/${id}/document`, // GET, PUT
     FAVORITE: (id: string) => `/pages/${id}/favorite`, // PUT, DELETE
     COMMENTS: (id: string) => `/pages/${id}/comments`, // GET, POST
   },

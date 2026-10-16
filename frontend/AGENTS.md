@@ -10,7 +10,7 @@
 | Dev server (port 3000) | `bun run dev` |
 | Build | `bun run build` |
 | All tests (e2e, full stack) | `bun run test:e2e` (same as `bun run test`) |
-| One spec | `bun run test:e2e e2e/items.spec.ts` |
+| One spec | `bun run test:e2e e2e/pages.spec.ts` |
 | Lint (includes `e2e/`) | `bun run lint` / `bun run lint:fix` |
 | Type check | `bun run typecheck` (`tsc --noEmit`) |
 | Format | `bun run format` / `bun run format:check` (`src/`, `e2e/`, root config files) |

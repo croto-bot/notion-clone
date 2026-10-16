@@ -12,3 +12,8 @@ export function requestTitleFocus(pageId: string) {
 export function consumeTitleFocus(pageId: string): boolean {
   return requested.delete(pageId)
 }
+
+/** True while a request waits (does not take it). */
+export function peekTitleFocus(pageId: string): boolean {
+  return requested.has(pageId)
+}

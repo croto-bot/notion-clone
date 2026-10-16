@@ -1,5 +1,55 @@
+import { pageColumnClass } from '@/components/PageHeader'
+import { DatabaseFrame } from '@/components/DatabaseFrame'
+import { useDatabaseMutations } from '@/hooks/useDatabase'
+import { useMembers } from '@/hooks/useWorkspaces'
+import { usePageRows } from '@/hooks/usePages'
+import { schemaOf } from '@/features/database/properties'
+import { getErrorMessage } from '@/lib/error-handler'
+import { cn } from '@/lib/utils'
 import type { PageResponse } from '@/types/page'
 
-export function DatabaseView({ page }: { page: PageResponse; editable: boolean }) {
-  return <div className="px-24 py-8">Database {page.id}</div>
+function DatabaseSkeleton() {
+  return (
+    <div aria-hidden="true" className="animate-pulse space-y-2 py-2">
+      <div className="bg-hover h-7 w-48 rounded-[4px]" />
+      <div className="bg-hover h-8 w-full rounded-[4px]" />
+      <div className="bg-hover h-8 w-full rounded-[4px]" />
+      <div className="bg-hover h-8 w-2/3 rounded-[4px]" />
+    </div>
+  )
+}
+
+export function DatabaseView({ page, editable }: { page: PageResponse; editable: boolean }) {
+  const { data: rows, isPending, isError, error } = usePageRows(page.id)
+  const { data: members = [] } = useMembers(page.workspace_id)
+  const mutations = useDatabaseMutations(page.id)
+  const schema = schemaOf(page.database_schema)
+
+  return (
+    <div className={cn(pageColumnClass(page), 'pt-1')}>
+      {isPending ? (
+        <DatabaseSkeleton />
+      ) : isError ? (
+        <p className="text-muted-foreground py-6 text-[14px]">
+          {getErrorMessage(error, 'Could not load this database.')}
+        </p>
+      ) : (
+        <DatabaseFrame
+          key={page.id}
+          databaseId={page.id}
+          editable={editable}
+          isPublic={false}
+          schema={schema}
+          storedViews={page.database_views ?? []}
+          allRows={rows ?? []}
+          members={members}
+          onSaveSchema={mutations.saveSchema}
+          onSaveViews={mutations.saveViews}
+          onSetRowValue={mutations.setRowValue}
+          onCreateRow={mutations.createRow}
+          onOpenRow={mutations.openRow}
+        />
+      )}
+    </div>
+  )
 }

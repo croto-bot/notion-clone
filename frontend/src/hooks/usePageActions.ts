@@ -18,6 +18,7 @@ import { toastApiError } from '@/lib/error-handler'
 import { requestTitleFocus } from '@/lib/title-focus'
 import { pageLabel } from '@/features/pages/page-tree'
 import { queryKeys } from '@/lib/query-keys'
+import type { RowProperties } from '@/types/database'
 import type { PageKind, PageResponse, PageSummary, UpdatePageData } from '@/types/page'
 
 interface CreateOptions {
@@ -25,8 +26,12 @@ interface CreateOptions {
   kind?: PageKind
   title?: string
   afterId?: string | null
+  /** Values of a new database row, keyed by property id. */
+  properties?: RowProperties
   /** Stay on the current page (used by the editor's Page slash item). */
   stay?: boolean
+  /** Put the cursor in the new page's or row's title even when staying. */
+  focusTitle?: boolean
 }
 
 /** Actions on pages with their toasts and navigation. Used by the sidebar, the top bar and menus. */
@@ -59,10 +64,16 @@ export function usePageActions() {
           kind: options.kind ?? 'page',
           title: options.title ?? '',
           ...(options.afterId !== undefined ? { after_id: options.afterId } : {}),
+          ...(options.properties ? { properties: options.properties } : {}),
         })
-        if (!options.stay) {
-          requestTitleFocus(page.id)
-          await openPage(page.id)
+        // Ask for the cursor in the title before the page or row shows up.
+        if (!options.stay || options.focusTitle) requestTitleFocus(page.id)
+        if (!options.stay) await openPage(page.id)
+        // A new database row shows in its database at once.
+        if (page.parent_id) {
+          queryClient.setQueryData<PageResponse[]>(queryKeys.pages.rows(page.parent_id), old =>
+            old && !old.some(row => row.id === page.id) ? [...old, page] : old
+          )
         }
         return page
       } catch (error) {
@@ -70,7 +81,7 @@ export function usePageActions() {
         return null
       }
     },
-    [createMutation, workspace.id, openPage]
+    [createMutation, workspace.id, openPage, queryClient]
   )
 
   const updatePage = useCallback(
