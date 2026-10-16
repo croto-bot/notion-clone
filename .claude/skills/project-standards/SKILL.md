@@ -12,9 +12,9 @@ with `docker-compose.yml`).
 - The code is the source of truth. When this file and the code disagree, the
   code wins. Fix this file in the same change.
 - Copy the reference features. Do not invent new patterns:
-  - Backend: `backend/app/modules/items/`
-  - Frontend: `frontend/src/routes/_authed/items.tsx`, `frontend/src/hooks/useItems.ts`
-  - Tests: `backend/tests/e2e/test_items.py`, `frontend/e2e/items.spec.ts`
+  - Backend: `backend/app/modules/workspaces/` (simple CRUD + roles), `backend/app/modules/pages/` (complex service, tree, WebSockets-adjacent reads)
+  - Frontend: `frontend/src/routes/_authed/items.tsx`, `frontend/src/hooks/useItems.ts` (the template's example; the product's own pages live under `_authed/p/`)
+  - Tests: `backend/tests/e2e/test_workspaces.py`, `backend/tests/e2e/test_collab_ws.py` (HTTP and WebSocket styles), `frontend/e2e/*.spec.ts`
 
 ## References
 

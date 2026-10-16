@@ -1,6 +1,6 @@
 # AGENTS.md — start here
 
-Full-stack web app: a FastAPI backend, a React 19 frontend (TanStack Start) and PostgreSQL 18.1, run together with Docker Compose. Session auth (register, login, OAuth with Google) and an example `items` feature are included.
+Full-stack web app: a FastAPI backend, a React 19 frontend (TanStack Start) and PostgreSQL 18.1, run together with Docker Compose. Session auth (register, login, OAuth with Google) and the Notion-clone features (workspaces with roles, page tree, trash, favorites, search, databases, comments, public pages, y-websocket collaboration, live workspace events) are included. The product contract is [docs/SPEC.md](docs/SPEC.md).
 
 ## Rule 0: read the standards first
 
@@ -76,7 +76,7 @@ make pre-commit-install       # ruff, frontend eslint + prettier, no-mock guards
 | `docker-compose.yml` | Services `db`, `backend`, `frontend` with their env and healthchecks |
 | `Makefile` | All dev commands. Run `make help` |
 | `backend/` | FastAPI API server |
-| `backend/app/` | App code: `main.py` (app factory), `routers.py`, `core/`, `database/`, `repositories/`, `services/`, `dependencies/`, `integrations/`, `user/` (users + auth), `modules/` (features, e.g. `items/`) |
+| `backend/app/` | App code: `main.py` (app factory + collab-server lifespan), `routers.py`, `core/`, `database/`, `repositories/`, `services/`, `dependencies/`, `integrations/`, `user/` (users + auth), `modules/` (features: `workspaces/`, `pages/`, `comments/`, `collab/`, `events/`) |
 | `backend/app/migrations/` | Alembic migrations (`env.py` + `versions/`) |
 | `backend/tests/e2e/` | Backend end-to-end suite (live server + real Postgres) |
 | `backend/.env.example` | Backend settings for runs **outside** Docker only |
