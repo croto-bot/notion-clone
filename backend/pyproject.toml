@@ -21,6 +21,11 @@ dependencies = [
     "loguru==0.7.3",
     "argon2-cffi==25.1.0",
     "requests-oauthlib==2.0.0",
+    "pycrdt==0.14.8",
+    "pycrdt-websocket==0.16.5",
+    # Runtime WebSocket support for uvicorn (the collab and events sockets);
+    # also the client library the e2e suite drives them with.
+    "websockets==17.1",
 ]
 
 [dependency-groups]
