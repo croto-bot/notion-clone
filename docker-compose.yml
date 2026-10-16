@@ -1,0 +1,91 @@
+services:
+  db:
+    image: postgres:18.1-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-notion-clone}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-notion-clone}
+      POSTGRES_DB: ${POSTGRES_DB:-notion-clone}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql  # Postgres 18 keeps PGDATA in 18/docker below this
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-notion-clone} -d ${POSTGRES_DB:-notion-clone}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-9095}:9095"
+    environment:
+      # Built from the db service credentials unless DB_URL is set in .env.
+      DB_URL: ${DB_URL:-postgresql://${POSTGRES_USER:-notion-clone}:${POSTGRES_PASSWORD:-notion-clone}@db:5432/${POSTGRES_DB:-notion-clone}}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-100}
+      DB_POOL_PRE_PING: ${DB_POOL_PRE_PING:-false}
+      APP_NAME: ${APP_NAME:-backend}
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      DEBUG_MODE: ${DEBUG_MODE:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-console}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      # Optional integrations: empty values turn them off.
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.0}
+      SENTRY_PROFILES_SAMPLE_RATE: ${SENTRY_PROFILES_SAMPLE_RATE:-0.0}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:${BACKEND_PORT:-9095}/auth/oauth/google/callback}
+      # Optional log context: empty values are left out of the logs.
+      VERSION: ${VERSION:-}
+      COMMIT_HASH: ${COMMIT_HASH:-}
+      INSTANCE_ID: ${INSTANCE_ID:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # Uses the interpreter already in the image — no curl, no extra apt layer.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9095/health', timeout=3).status == 200 else 1)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Baked in at build time by Vite, so it must match the published port.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:9095}
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+volumes:
+  postgres_data:

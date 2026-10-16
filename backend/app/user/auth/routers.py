@@ -1,0 +1,215 @@
+"""Module with the routers related to the auth service"""
+
+import uuid
+from urllib.parse import urlencode
+
+import loguru
+from fastapi import APIRouter, Body, Depends, Query, status
+from fastapi.responses import RedirectResponse
+
+from app.core.config import settings
+from app.core.logging import log_custom
+from app.user.auth.dependencies import get_auth_service
+from app.user.auth.exceptions import (
+    InactiveUserError,
+    OAuthProviderError,
+    OAuthUserPasswordResetError,
+)
+from app.user.auth.permissions import AuthenticatedUser
+from app.user.auth.schemas import (
+    EmailVerificationConfirm,
+    EmailVerificationConfirmResponse,
+    EmailVerificationResponse,
+    LogoutResponse,
+    OAuthCallback,
+    PasswordResetConfirm,
+    PasswordResetConfirmResponse,
+    PasswordResetRequest,
+    PasswordResetResponse,
+    SessionResponse,
+)
+from app.user.auth.service import OAUTH_PROVIDER_NAMES, AuthService
+from app.user.schemas import UserRegister
+
+auth_router = APIRouter()
+
+
+def _frontend_redirect(path: str, **params: str) -> RedirectResponse:
+    """Redirect the browser to a frontend page with URL-encoded query params."""
+    return RedirectResponse(
+        url=f"{settings.FRONTEND_URL}{path}?{urlencode(params)}",
+        status_code=status.HTTP_302_FOUND,
+    )
+
+
+@auth_router.post(
+    "/login",
+    response_description="Login a user using username and password",
+    status_code=status.HTTP_200_OK,
+)
+async def login_user(
+    email: str = Body(...),
+    password: str = Body(...),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> SessionResponse:
+    return await auth_service.authenticate(email=email, password=password)
+
+
+@auth_router.post(
+    "/register",
+    response_description="Register a new user",
+    status_code=status.HTTP_201_CREATED,
+)
+async def register_user(
+    user: UserRegister = Body(...),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> SessionResponse:
+    return await auth_service.register(new_user=user)
+
+
+@auth_router.post(
+    "/logout",
+    response_description="Logout current session",
+    status_code=status.HTTP_200_OK,
+)
+async def logout_user(
+    session_id: str = Depends(AuthenticatedUser.current_session_id),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> LogoutResponse:
+    """Logout the current user by invalidating their session."""
+    await auth_service.logout(session_id)
+    return LogoutResponse()
+
+
+@auth_router.post(
+    "/logout/all",
+    response_description="Logout from all devices",
+    status_code=status.HTTP_200_OK,
+)
+async def logout_all_devices(
+    user_id: uuid.UUID = Depends(AuthenticatedUser.current_user_id),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> LogoutResponse:
+    """Logout from all devices by invalidating all sessions for the user."""
+    await auth_service.logout_all(user_id)
+    return LogoutResponse(message="Successfully logged out from all devices")
+
+
+@auth_router.get(
+    "/oauth/{provider}/callback",
+    response_description="OAuth callback",
+)
+async def oauth_callback(
+    provider: str,
+    auth_service: AuthService = Depends(get_auth_service),
+    callback: OAuthCallback = Query(...),
+) -> RedirectResponse:
+    if provider not in OAUTH_PROVIDER_NAMES:
+        return _frontend_redirect("/oauth/error", error="unsupported_provider")
+    if callback.error or not callback.code:
+        # The provider redirects back without a code when the user declines
+        # consent (?error=access_denied). Send the browser to the frontend
+        # error page instead of a JSON validation error.
+        return _frontend_redirect(
+            "/oauth/error", error=callback.error or "missing_code"
+        )
+    try:
+        session = await auth_service.oauth_login(
+            provider_name=provider, payload=callback
+        )
+    except InactiveUserError:
+        return _frontend_redirect("/oauth/error", error="inactive_user")
+    except OAuthProviderError as err:
+        # The redirect hides the cause from the browser; the wide event keeps it.
+        log_custom(provider_failure=type(err.__cause__).__name__)
+        return _frontend_redirect("/oauth/error", error=err.error_code)
+    return _frontend_redirect("/oauth/callback", session=session.id)
+
+
+# Password Reset Endpoints
+
+
+@auth_router.post(
+    "/password/reset",
+    response_description="Request password reset email",
+    status_code=status.HTTP_200_OK,
+)
+async def request_password_reset(
+    request: PasswordResetRequest = Body(...),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> PasswordResetResponse:
+    """
+    Request a password reset email.
+
+    Always returns success to prevent email enumeration attacks.
+    If the email exists and is not an OAuth-only account, a reset token will be generated.
+    """
+    try:
+        token = await auth_service.initiate_password_reset(request.email)
+    except OAuthUserPasswordResetError:
+        # Treat OAuth-only accounts the same as missing users to prevent enumeration
+        return PasswordResetResponse()
+    if token:
+        loguru.logger.debug("Password reset token generated — implement email delivery")
+    return PasswordResetResponse()
+
+
+@auth_router.post(
+    "/password/confirm",
+    response_description="Confirm password reset with token",
+    status_code=status.HTTP_200_OK,
+)
+async def confirm_password_reset(
+    request: PasswordResetConfirm = Body(...),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> PasswordResetConfirmResponse:
+    """
+    Reset password using a valid token.
+
+    The token is received from the password reset email.
+    """
+    await auth_service.reset_password(request.token, request.new_password)
+    return PasswordResetConfirmResponse()
+
+
+# Email Verification Endpoints
+
+
+@auth_router.post(
+    "/email/verify",
+    response_description="Request email verification",
+    status_code=status.HTTP_200_OK,
+)
+async def request_email_verification(
+    user_id: uuid.UUID = Depends(AuthenticatedUser.current_user_id),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> EmailVerificationResponse:
+    """
+    Request an email verification link.
+
+    Requires authentication. Generates a verification token and sends an email.
+    """
+    token = await auth_service.initiate_email_verification(user_id)
+    if token:
+        loguru.logger.debug(
+            "Email verification token generated — implement email delivery"
+        )
+    return EmailVerificationResponse()
+
+
+@auth_router.post(
+    "/email/verify/confirm",
+    response_description="Confirm email verification",
+    status_code=status.HTTP_200_OK,
+)
+async def confirm_email_verification(
+    request: EmailVerificationConfirm = Body(...),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> EmailVerificationConfirmResponse:
+    """
+    Verify email using a valid token.
+
+    The token is received from the verification email.
+    """
+    await auth_service.verify_email(request.token)
+    return EmailVerificationConfirmResponse()

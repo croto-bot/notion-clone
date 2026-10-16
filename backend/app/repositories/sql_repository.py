@@ -1,0 +1,291 @@
+import uuid
+from collections.abc import Callable, Sequence
+from functools import wraps
+from typing import Any, TypeVar
+
+from fastapi_filter.base.filter import BaseFilterModel
+from fastapi_pagination import Page, Params
+from fastapi_pagination.ext.sqlalchemy import paginate
+from loguru import logger
+from pydantic import BaseModel
+from sqlalchemy import Selectable, delete, select
+from sqlalchemy import update as sql_update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import Select
+
+from app.database.db.statement_generator import select_from_pydantic
+from app.repositories.base_repository import BaseRepository, QueryOptions, T
+from app.repositories.clauses import (
+    OnConflictClause,
+    conflict_passthrough,
+)
+from app.repositories.exceptions import DuplicateError, NotFoundError, ReferencedError
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+class SQLAlchemyRepository(BaseRepository[T]):
+    """SQLAlchemy repository with extensible database-specific behavior.
+
+    This repository provides CRUD operations with PostgreSQL-specific features.
+    Subclasses can override protected methods to adapt to different databases.
+    """
+
+    model: type[T]
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    def _generate_select_from_pydantic(
+        self, pydantic_model: type[BaseModel], query: Select[Any] | None = None
+    ) -> Select[Any]:
+        """Add load_only/joinedload options so only the schema's fields are fetched."""
+        options = select_from_pydantic(self.model, pydantic_model)
+        base = query if query is not None else select(self.model)
+        return base.options(*options)
+
+    def _base_query(self, **kwargs: Any) -> Select[Any]:
+        return select(self.model)
+
+    def _normalize_values(
+        self,
+        entity: BaseModel | dict[str, Any],
+        exclude_unset: bool = False,
+        **extra_fields: Any,
+    ) -> dict[str, Any]:
+        """Normalize entity to dict values for SQL operations."""
+        if isinstance(entity, dict):
+            values = entity
+        elif exclude_unset:
+            values = entity.model_dump(exclude_unset=True)
+        else:
+            values = entity.model_dump()
+
+        return {**values, **extra_fields} if extra_fields else values
+
+    @staticmethod
+    def _get_postgres_insert() -> Any:
+        """Get the PostgreSQL insert statement builder.
+
+        Override this for different database backends.
+
+        Returns:
+            The PostgreSQL insert callable (a statement factory, not a dialect).
+        """
+        from sqlalchemy.dialects.postgresql import insert
+
+        return insert
+
+    @classmethod
+    def _parse_integrity_error(cls, error: Exception) -> Exception:
+        """Parse database-specific integrity errors.
+
+        Override this for different database backends.
+
+        Args:
+            error: The original integrity error
+
+        Returns:
+            A RepositoryError subclass if recognized, otherwise the original error unchanged.
+            The caller (translate_commit_errors) is responsible for re-raising unparsed errors.
+        """
+        import sqlalchemy.exc as sqlalchemy_exc
+
+        if isinstance(error, sqlalchemy_exc.IntegrityError):
+            error_msg = str(error.orig).lower() if error.orig else ""
+            if "unique violation" in error_msg or "duplicate key" in error_msg:
+                return DuplicateError(
+                    detail=f"Duplicate entry found in {cls.model._display_name()}"
+                )
+            if (
+                "foreign key violation" in error_msg
+                or "is still referenced" in error_msg
+            ):
+                return ReferencedError(
+                    detail=f"{cls.model._display_name()} is being referenced by another table"
+                )
+        return error
+
+    @staticmethod
+    def translate_commit_errors(func: F) -> F:
+        @wraps(func)
+        async def exception_wrapper(
+            self: "SQLAlchemyRepository[T]", *args: Any, **kwargs: Any
+        ) -> Any:
+            try:
+                return await func(self, *args, **kwargs)
+            except Exception as e:
+                parsed_error = self._parse_integrity_error(e)
+                if parsed_error is not e:
+                    raise parsed_error from e
+                raise
+
+        return exception_wrapper  # type: ignore[return-value]  # Inner wrapper has same signature as func but type checker can't verify through the closure
+
+    @translate_commit_errors
+    async def get(
+        self,
+        entity_id: uuid.UUID,
+        raise_error: bool = True,
+        response_model: type[BaseModel] | None = None,
+    ) -> T | None:
+        return await self._get_by_field_value(
+            "id", entity_id, raise_error, response_model
+        )
+
+    @translate_commit_errors
+    async def get_by_field(
+        self,
+        field: str,
+        value: Any,
+        raise_error: bool = True,
+        response_model: type[BaseModel] | None = None,
+    ) -> T | None:
+        return await self._get_by_field_value(field, value, raise_error, response_model)
+
+    async def _get_by_field_value(
+        self,
+        field: str,
+        value: Any,
+        raise_error: bool,
+        response_model: type[BaseModel] | None,
+    ) -> T | None:
+        if not (filter_model_field := getattr(self.model, field, None)):
+            raise AttributeError(
+                f"Field '{field}' not found in {self.model._display_name()}"
+            )
+        query: Select[Any] = select(self.model)
+        if response_model:
+            query = self._generate_select_from_pydantic(response_model)
+
+        result = await self._session.execute(query.where(filter_model_field == value))
+        item = result.scalar()
+
+        if item is None and raise_error:
+            raise NotFoundError(
+                detail=f"{self.model._display_name()} {value} not found"
+            )
+        return item
+
+    def _build_filtered_query(
+        self,
+        entity_filter: BaseFilterModel | None,
+        options: QueryOptions | None,
+    ) -> Any:
+        opts = options or QueryOptions()
+        query = opts.base_query if opts.base_query is not None else self._base_query()
+        if opts.response_model:
+            query = self._generate_select_from_pydantic(opts.response_model, query)
+        if entity_filter:
+            query = entity_filter.filter(query)
+            if hasattr(entity_filter, "sort"):
+                query = entity_filter.sort(query)
+        return query, opts
+
+    async def get_all(
+        self,
+        entity_filter: BaseFilterModel | None = None,
+        options: QueryOptions | None = None,
+    ) -> list[T]:
+        query, opts = self._build_filtered_query(entity_filter, options)
+        result = await self._session.execute(query)  # type: ignore[call-overload]  # execute() overloads don't include generic Select[Any]; runtime is correct
+        return list(result.scalars().all() if opts.return_scalars else result.all())
+
+    async def get_all_paginated(
+        self,
+        pagination_params: Params,
+        entity_filter: BaseFilterModel | None = None,
+        options: QueryOptions | None = None,
+    ) -> Page[T]:
+        query, opts = self._build_filtered_query(entity_filter, options)
+        # paginate returns Any due to dynamic params typing - explicit cast needed
+        return await paginate(  # type: ignore[no-any-return, call-overload]  # paginate() returns Any due to generic params; runtime returns Page[T]
+            self._session,
+            query,
+            params=pagination_params,
+            **opts.pagination_kwargs,
+        )
+
+    @translate_commit_errors
+    async def create(self, entity: BaseModel, **extra_fields: Any) -> T:
+        """Create a single entity using INSERT ... RETURNING."""
+        postgres_insert = self._get_postgres_insert()
+        values = self._normalize_values(entity, **extra_fields)
+
+        stmt = postgres_insert(self.model).values(values).returning(self.model)
+        result = await self._session.execute(stmt)
+        await self._session.commit()
+        return result.scalar_one()
+
+    @translate_commit_errors
+    async def upsert(self, entity: BaseModel, **extra_fields: Any) -> T:
+        """Insert or update based on primary key using INSERT ... ON CONFLICT DO UPDATE."""
+        postgres_insert = self._get_postgres_insert()
+        values = self._normalize_values(entity, **extra_fields)
+
+        stmt = (
+            postgres_insert(self.model)
+            .values(values)
+            .on_conflict_do_update(index_elements=["id"], set_=values)
+            .returning(self.model)
+        )
+        result = await self._session.execute(stmt)
+        await self._session.commit()
+        return result.scalar_one()
+
+    @translate_commit_errors
+    async def update(
+        self, entity_id: uuid.UUID, updated_entity: BaseModel | dict[str, Any]
+    ) -> T:
+        """Update an entity using UPDATE ... RETURNING."""
+        updated_values = self._normalize_values(updated_entity, exclude_unset=True)
+
+        stmt = (
+            sql_update(self.model)
+            .where(self.model.id == entity_id)  # type: ignore[attr-defined]  # model is TypeVar bound to Base; .id attr exists at runtime via mapped_column
+            .values(**updated_values)
+            .returning(self.model)
+        )
+
+        result = await self._session.execute(stmt)
+        await self._session.commit()
+
+        updated = result.scalar_one_or_none()
+        if updated is None:
+            raise NotFoundError(
+                detail=f"{self.model._display_name()} {entity_id} not found"
+            )
+        return updated
+
+    @translate_commit_errors
+    async def delete(self, entity_id: uuid.UUID) -> None:
+        await self._session.execute(
+            delete(self.model).where(self.model.id == entity_id)  # type: ignore[attr-defined]  # model is TypeVar bound to Base; .id attr exists at runtime via mapped_column
+        )
+        await self._session.commit()
+
+    @translate_commit_errors
+    async def create_many(
+        self,
+        entities: Sequence[BaseModel],
+        on_conflict: OnConflictClause = conflict_passthrough,
+    ) -> list[T]:
+        """Create multiple entities using bulk INSERT ... RETURNING."""
+        if not entities:
+            logger.warning("No entities to create")
+            return []
+
+        postgres_insert = self._get_postgres_insert()
+        values = [entity.model_dump() for entity in entities]
+
+        stmt = postgres_insert(self.model).values(values)
+        stmt = on_conflict(stmt)
+
+        result = await self._session.execute(stmt.returning(self.model))
+        await self._session.commit()
+        return list(result.scalars().all())
+
+    @translate_commit_errors
+    async def delete_many(self, delete_filter_query: Selectable) -> None:
+        await self._session.execute(delete_filter_query)  # type: ignore[call-overload]  # Selectable base type accepted by execute() at runtime but not in overloads
+        await self._session.commit()

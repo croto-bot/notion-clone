@@ -1,0 +1,47 @@
+"""Module with the models for the DB connection for user"""
+
+import uuid
+from datetime import datetime
+
+from argon2 import PasswordHasher
+from argon2.exceptions import Argon2Error, InvalidHashError
+from sqlalchemy import DateTime, Index
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.database.base import Base
+from app.database.mixins import TimestampMixin
+
+# Module-level singleton — shared by service.py and schemas.py to avoid redundant instantiation
+_ph = PasswordHasher()
+
+
+class User(TimestampMixin, Base):
+    __tablename__ = "user"
+    # Same schema as the migrations: a UNIQUE constraint plus a plain index.
+    # (`unique=True, index=True` would mean one unique index instead.)
+    __table_args__ = (Index("user_email_idx", "email"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(unique=True)
+    display_name: Mapped[str] = mapped_column(index=True, server_default="")
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+    password: Mapped[str | None] = mapped_column()
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+
+    def check_password(self, password: str) -> bool:
+        if self.password is None:
+            return False
+        try:
+            return _ph.verify(self.password, password)
+        except (Argon2Error, InvalidHashError):
+            # InvalidHashError subclasses ValueError, not Argon2Error: a stored
+            # value that is not a valid argon2 encoding must read as a failed
+            # login, not a 500.
+            return False
+
+    @property
+    def is_email_verified(self) -> bool:
+        return self.email_verified_at is not None
