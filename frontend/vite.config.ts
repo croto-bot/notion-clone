@@ -22,6 +22,10 @@ const config = defineConfig({
     viteReact(),
     tailwindcss(),
   ],
+  resolve: {
+    // One copy of Yjs: a second one (CJS next to ESM) breaks its instanceof checks.
+    dedupe: ['yjs', 'y-protocols', 'y-prosemirror'],
+  },
   optimizeDeps: {
     // TanStack Start has no index.html, so Vite finds dependencies only when a
     // page first imports them, then re-bundles and reloads the page (and old

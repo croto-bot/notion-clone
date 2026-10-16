@@ -134,7 +134,10 @@ class ApiClient {
   }
 
   private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
-    return (await this.execute(endpoint, options)).json()
+    const response = await this.execute(endpoint, options)
+    // 204 No Content (e.g. PUT /pages/{id}/favorite) has no body to parse.
+    if (response.status === 204) return undefined as T
+    return response.json()
   }
 
   get<T>(endpoint: string) {

@@ -7,7 +7,7 @@ export function useAuthSubmit<TPayload extends Record<string, unknown>>(
   endpoint: string,
   successMessage: string,
   errorMessage: string,
-  redirect: NavigateOptions = { to: '/' }
+  redirect: NavigateOptions = { to: '/home' }
 ) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()

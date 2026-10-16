@@ -1,0 +1,313 @@
+/*
+ * Notion look for the BlockNote editor (loaded with the editor only).
+ * The colors and the font of the menus come from the `theme` prop (features/editor/theme.ts);
+ * this file shapes the document itself: type scale, spacing, lists, quotes, code, callouts.
+ * Every rule starts with .nx-editor so it beats BlockNote's own styles.
+ */
+
+.nx-editor {
+  --nx-text: rgb(55, 53, 47);
+  --nx-text-secondary: rgba(55, 53, 47, 0.65);
+  --nx-border: rgba(55, 53, 47, 0.16);
+  --nx-code-bg: rgb(247, 246, 243);
+  --nx-inline-code-bg: rgba(135, 131, 120, 0.15);
+  --nx-callout-bg: rgb(241, 241, 239);
+  --nx-link-line: rgba(55, 53, 47, 0.4);
+  --nx-hover: rgba(55, 53, 47, 0.06);
+  background: transparent;
+  font-family: inherit;
+}
+.dark .nx-editor {
+  --nx-text: rgba(255, 255, 255, 0.81);
+  --nx-text-secondary: rgba(255, 255, 255, 0.46);
+  --nx-border: rgba(255, 255, 255, 0.13);
+  --nx-code-bg: rgb(47, 47, 47);
+  --nx-inline-code-bg: rgba(135, 131, 120, 0.3);
+  --nx-callout-bg: rgb(47, 47, 47);
+  --nx-link-line: rgba(255, 255, 255, 0.4);
+  --nx-hover: rgba(255, 255, 255, 0.055);
+}
+
+/* The document sits in the page column: the block handles live in the page's side margin. */
+.nx-editor .bn-editor {
+  padding-inline: 0;
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--nx-text);
+  background: transparent;
+}
+.nx-editor.nx-small-text .bn-editor {
+  font-size: 14px;
+}
+.nx-editor .bn-block-outer {
+  line-height: 1.5;
+}
+.nx-editor .bn-block-content {
+  padding: 3px 2px;
+  color: var(--nx-text);
+}
+
+/* Headings: 1.875 / 1.5 / 1.25 em, weight 600, with Notion's space above. */
+.nx-editor [data-content-type='heading'] {
+  --level: 1.875em;
+  padding-top: 32px;
+  padding-bottom: 4px;
+  line-height: 1.3;
+  font-weight: 600;
+}
+.nx-editor [data-content-type='heading'][data-level='2'] {
+  --level: 1.5em;
+  padding-top: 22px;
+}
+.nx-editor [data-content-type='heading'][data-level='3'] {
+  --level: 1.25em;
+  padding-top: 16px;
+}
+.nx-editor [data-content-type='heading'][data-level='4'] {
+  --level: 1.1em;
+  padding-top: 12px;
+}
+.nx-editor [data-prev-level='1'] {
+  --prev-level: 1.875em;
+}
+.nx-editor [data-prev-level='2'] {
+  --prev-level: 1.5em;
+}
+.nx-editor [data-prev-level='3'] {
+  --prev-level: 1.25em;
+}
+.nx-editor [data-prev-level='4'] {
+  --prev-level: 1.1em;
+}
+.nx-editor .bn-block-outer:first-child > .bn-block > [data-content-type='heading'] {
+  padding-top: 4px;
+}
+.nx-editor .bn-block-outer[data-prev-type='heading'] > .bn-block > .bn-block-content,
+.nx-editor
+  .bn-block-outer:not([data-prev-type])
+  > .bn-block
+  > .bn-block-content[data-content-type='heading'] {
+  font-weight: 600;
+}
+
+/* Empty-block hint */
+.nx-editor .bn-inline-content:has(> .ProseMirror-trailingBreak:only-child)::before {
+  color: var(--nx-text-secondary);
+  opacity: 0.7;
+  font-style: normal;
+}
+
+/* Lists: Notion's 24 px gutter. */
+.nx-editor .bn-block-content[data-content-type='bulletListItem']::before,
+.nx-editor .bn-block-content[data-content-type='numberedListItem']::before {
+  min-width: 24px;
+  padding-right: 4px;
+}
+.nx-editor .bn-block-group .bn-block-group {
+  margin-left: 24px;
+}
+.nx-editor .bn-block-content[data-content-type='numberedListItem']::before {
+  color: var(--nx-text);
+}
+
+/* To-do: a rounded square that turns blue when checked. */
+.nx-editor .bn-block-content[data-content-type='checkListItem'] > div:has(> input) {
+  display: flex;
+  align-items: center;
+  height: 24px;
+}
+.nx-editor .bn-block-content[data-content-type='checkListItem'] > div > input {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  position: relative;
+  width: 16px;
+  height: 16px;
+  margin: 0 8px 0 4px;
+  border: 1.5px solid var(--nx-text);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background-color 100ms ease,
+    border-color 100ms ease;
+}
+.nx-editor .bn-block-content[data-content-type='checkListItem'] > div > input:checked {
+  background: rgb(35, 131, 226);
+  border-color: rgb(35, 131, 226);
+}
+.nx-editor .bn-block-content[data-content-type='checkListItem'] > div > input:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 0.5px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(40deg);
+}
+.nx-editor
+  .bn-block-content[data-content-type='checkListItem'][data-checked='true']
+  .bn-inline-content {
+  text-decoration: line-through;
+  color: var(--nx-text-secondary);
+}
+
+/* Quote: a 3 px bar and a slightly larger text. */
+.nx-editor [data-content-type='quote'] blockquote {
+  border-left: 3px solid currentColor;
+  color: inherit;
+  padding: 0 14px;
+  font-size: 1.2em;
+  line-height: 1.5;
+}
+
+/* Divider */
+.nx-editor [data-content-type='divider'] hr {
+  border: none;
+  border-top: 1px solid var(--nx-border);
+  margin: 6px 0;
+}
+
+/* Code */
+.nx-editor .bn-block-content[data-content-type='codeBlock'] {
+  background-color: var(--nx-code-bg);
+  color: var(--nx-text);
+  border-radius: 4px;
+  font-size: 85%;
+}
+.nx-editor .bn-block-content[data-content-type='codeBlock'] > pre {
+  padding: 34px 16px 24px 24px;
+  font-family: var(--font-mono, iawriter-mono, Nitti, Menlo, Courier, monospace);
+  line-height: 1.5;
+}
+.nx-editor .bn-block-content[data-content-type='codeBlock'] > div > select {
+  color: var(--nx-text-secondary);
+  font-size: 12px;
+  left: 12px;
+  top: 6px;
+  border-radius: 3px;
+}
+.nx-editor .bn-block-content[data-content-type='codeBlock'] > div > select:hover {
+  background-color: var(--nx-hover);
+}
+.nx-editor .bn-inline-content code {
+  font-family: var(--font-mono, iawriter-mono, Nitti, Menlo, Courier, monospace);
+  font-size: 85%;
+  color: #eb5757;
+  background: var(--nx-inline-code-bg);
+  border-radius: 3px;
+  padding: 0.2em 0.4em;
+}
+
+/* Links: a quiet underline. */
+.nx-editor .bn-inline-content a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--nx-link-line);
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  transition: text-decoration-color 100ms ease;
+}
+.nx-editor .bn-inline-content a:hover {
+  text-decoration-color: currentColor;
+}
+
+/* Callout */
+.nx-editor .nx-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 16px 16px 16px 12px;
+  border-radius: 4px;
+  background: var(--nx-callout-bg);
+}
+.nx-editor
+  .bn-block-content[data-content-type='callout']:not(
+    [data-background-color='default']
+  )[data-background-color]
+  .nx-callout {
+  background: transparent;
+}
+.nx-editor .nx-callout-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-top: -1px;
+  border-radius: 4px;
+  font-size: 20px;
+  line-height: 1;
+  transition: background-color 100ms ease;
+}
+.nx-editor .nx-callout-icon:not(:disabled):hover {
+  background: var(--nx-hover);
+}
+.nx-editor .nx-callout-content {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Page link block: icon, title, a row you can click. */
+.nx-editor .nx-page-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-weight: 500;
+  color: inherit;
+  text-decoration: none;
+  transition: background-color 100ms ease;
+}
+.nx-editor a.nx-page-link:hover {
+  background: var(--nx-hover);
+}
+.nx-editor .nx-page-link-title {
+  text-decoration: underline;
+  text-decoration-color: var(--nx-link-line);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+.nx-editor .nx-page-link-static {
+  color: var(--nx-text-secondary);
+}
+
+/* Tables */
+.nx-editor [data-content-type='table'] table {
+  border-color: var(--nx-border);
+}
+.nx-editor [data-content-type='table'] td,
+.nx-editor [data-content-type='table'] th {
+  border-color: var(--nx-border);
+  padding: 6px 10px;
+}
+
+/* Images */
+.nx-editor [data-content-type='image'] img {
+  border-radius: 4px;
+}
+
+/* Block handles: quiet until hovered */
+.nx-editor .bn-side-menu .bn-button {
+  color: var(--nx-text-secondary);
+  border-radius: 4px;
+}
+.nx-editor .bn-side-menu .bn-button:hover {
+  background: var(--nx-hover);
+}
+
+/* Live cursors: names in a small tab above the caret. */
+.nx-editor .bn-collaboration-cursor__label {
+  font-family: inherit;
+}
+
+/* Selection inside the editor */
+.nx-editor .bn-editor ::selection {
+  background: rgba(45, 170, 219, 0.3);
+}

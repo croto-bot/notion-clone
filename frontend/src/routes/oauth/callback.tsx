@@ -30,8 +30,8 @@ function OAuthCallback() {
     }
     login(session)
     // replace: keep the session id out of the browser history.
-    navigate({ to: '/', replace: true })
+    navigate({ to: '/home', replace: true })
   }, [session, login, navigate])
 
-  return <p className="pt-32 text-center text-muted-foreground">Signing you in…</p>
+  return <p className="text-muted-foreground pt-32 text-center">Signing you in…</p>
 }

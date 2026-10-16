@@ -10,7 +10,7 @@
  *
  * Adding a feature:
  *   1. Write e2e/<feature>.spec.ts that imports from './fixtures'.
- *   2. Put API helpers for the new resource here, next to createItem().
+ *   2. Put API helpers for the new resource here, next to createPage().
  *   3. Visit every new page from a spec, and use every new endpoint in
  *      src/lib/api-endpoints.ts from a spec or a helper here. e2e/guards.spec.ts
  *      fails for a route or an endpoint that no test uses.
@@ -37,7 +37,25 @@ import {
 } from '@playwright/test'
 import { AUTH_TOKEN_KEY } from '../src/lib/auth'
 import type { AuthSessionResponse } from '../src/types/auth'
-import type { CreateItemData, Item, ItemsResponse } from '../src/types/item'
+import type { Comment, CreateCommentData, UpdateCommentData } from '../src/types/comment'
+import type {
+  CreatePageData,
+  DocumentResponse,
+  MovePageData,
+  PageResponse,
+  PageSummary,
+  SearchResult,
+  UpdatePageData,
+} from '../src/types/page'
+import type { PublicPage } from '../src/types/public-page'
+import type { CurrentUser, UpdateCurrentUserData } from '../src/types/user'
+import type {
+  CreateWorkspaceData,
+  Member,
+  Role,
+  UpdateWorkspaceData,
+  Workspace,
+} from '../src/types/workspace'
 import { BACKEND_URL, FRONTEND_URL } from './support/stack'
 
 export { expect }
@@ -47,9 +65,14 @@ export { BACKEND_URL, FRONTEND_URL }
 export interface TestUser {
   email: string
   password: string
+  /** The name given at sign-up; empty when none. */
+  displayName: string
   /** Real session id from the backend. The app sends it as `Authorization: Bearer <token>`. */
   token: string
 }
+
+/** What the API helpers need to act as a user: its session token. */
+export type Token = Pick<TestUser, 'token'>
 
 /** Meets the register form rules (8+ characters). */
 export const PASSWORD = 'Correct-Horse-42'
@@ -76,12 +99,15 @@ export function authHeaders(user: Pick<TestUser, 'token'>): Record<string, strin
 export async function registerUser(
   api: APIRequestContext,
   email = uniqueEmail(),
-  password = PASSWORD
+  password = PASSWORD,
+  displayName = ''
 ): Promise<TestUser> {
-  const response = await api.post('/auth/register', { data: { email, raw_password: password } })
+  const response = await api.post('/auth/register', {
+    data: { email, raw_password: password, display_name: displayName },
+  })
   await expectOk(response, `POST /auth/register (${email})`)
   const session = (await response.json()) as AuthSessionResponse
-  return { email, password, token: session.id }
+  return { email, password, displayName, token: session.id }
 }
 
 /** Signs in through POST /auth/login and returns the new session token. */
@@ -95,31 +121,367 @@ export async function loginUser(
   return ((await response.json()) as AuthSessionResponse).id
 }
 
-export async function createItem(
-  api: APIRequestContext,
-  owner: TestUser,
-  data: CreateItemData
-): Promise<Item> {
-  const response = await api.post('/items', { data, headers: authHeaders(owner) })
-  await expectOk(response, 'POST /items')
-  return (await response.json()) as Item
+/** `GET /users/me` */
+export async function getMe(api: APIRequestContext, user: Token): Promise<CurrentUser> {
+  const response = await api.get('/users/me', { headers: authHeaders(user) })
+  await expectOk(response, 'GET /users/me')
+  return (await response.json()) as CurrentUser
 }
 
-/** Creates the items one after another, so the list order (created_at) follows `names`. */
-export async function createItems(
+export async function updateMe(
   api: APIRequestContext,
-  owner: TestUser,
-  names: string[]
-): Promise<Item[]> {
-  const items: Item[] = []
-  for (const name of names) items.push(await createItem(api, owner, { name }))
-  return items
+  user: Token,
+  data: UpdateCurrentUserData
+): Promise<CurrentUser> {
+  const response = await api.patch('/users/me', { data, headers: authHeaders(user) })
+  await expectOk(response, 'PATCH /users/me')
+  return (await response.json()) as CurrentUser
 }
 
-export async function listItems(api: APIRequestContext, owner: TestUser): Promise<Item[]> {
-  const response = await api.get('/items?size=100', { headers: authHeaders(owner) })
-  await expectOk(response, 'GET /items')
-  return ((await response.json()) as ItemsResponse).items
+export async function listWorkspaces(api: APIRequestContext, user: Token): Promise<Workspace[]> {
+  const response = await api.get('/workspaces', { headers: authHeaders(user) })
+  await expectOk(response, 'GET /workspaces')
+  return (await response.json()) as Workspace[]
+}
+
+export async function createWorkspace(
+  api: APIRequestContext,
+  owner: Token,
+  data: CreateWorkspaceData = { name: `Workspace ${randomUUID().slice(0, 8)}` }
+): Promise<Workspace> {
+  const response = await api.post('/workspaces', { data, headers: authHeaders(owner) })
+  await expectOk(response, 'POST /workspaces')
+  return (await response.json()) as Workspace
+}
+
+export async function updateWorkspace(
+  api: APIRequestContext,
+  owner: Token,
+  workspaceId: string,
+  data: UpdateWorkspaceData
+): Promise<Workspace> {
+  const response = await api.patch(`/workspaces/${workspaceId}`, {
+    data,
+    headers: authHeaders(owner),
+  })
+  await expectOk(response, `PATCH /workspaces/${workspaceId}`)
+  return (await response.json()) as Workspace
+}
+
+export async function deleteWorkspace(
+  api: APIRequestContext,
+  owner: Token,
+  workspaceId: string
+): Promise<void> {
+  const response = await api.delete(`/workspaces/${workspaceId}`, { headers: authHeaders(owner) })
+  await expectOk(response, `DELETE /workspaces/${workspaceId}`)
+}
+
+export async function listMembers(
+  api: APIRequestContext,
+  user: Token,
+  workspaceId: string
+): Promise<Member[]> {
+  const response = await api.get(`/workspaces/${workspaceId}/members`, {
+    headers: authHeaders(user),
+  })
+  await expectOk(response, `GET /workspaces/${workspaceId}/members`)
+  return (await response.json()) as Member[]
+}
+
+export async function addMember(
+  api: APIRequestContext,
+  owner: Token,
+  workspaceId: string,
+  member: Pick<TestUser, 'email'>,
+  role: Role = 'editor'
+): Promise<Member> {
+  const response = await api.post(`/workspaces/${workspaceId}/members`, {
+    data: { email: member.email, role },
+    headers: authHeaders(owner),
+  })
+  await expectOk(response, `POST /workspaces/${workspaceId}/members`)
+  return (await response.json()) as Member
+}
+
+export async function setMemberRole(
+  api: APIRequestContext,
+  owner: Token,
+  workspaceId: string,
+  userId: string,
+  role: Role
+): Promise<Member> {
+  const response = await api.patch(`/workspaces/${workspaceId}/members/${userId}`, {
+    data: { role },
+    headers: authHeaders(owner),
+  })
+  await expectOk(response, `PATCH /workspaces/${workspaceId}/members/${userId}`)
+  return (await response.json()) as Member
+}
+
+export async function removeMember(
+  api: APIRequestContext,
+  actor: Token,
+  workspaceId: string,
+  userId: string
+): Promise<void> {
+  const response = await api.delete(`/workspaces/${workspaceId}/members/${userId}`, {
+    headers: authHeaders(actor),
+  })
+  await expectOk(response, `DELETE /workspaces/${workspaceId}/members/${userId}`)
+}
+
+/** The user's first workspace, created when the user has none (what the app does after sign-in). */
+export async function ensureWorkspace(api: APIRequestContext, user: TestUser): Promise<Workspace> {
+  const existing = await listWorkspaces(api, user)
+  return existing[0] ?? createWorkspace(api, user, { name: `${user.email.split('@')[0]}'s Notion` })
+}
+
+export async function createPage(
+  api: APIRequestContext,
+  owner: Token,
+  data: CreatePageData
+): Promise<PageResponse> {
+  const response = await api.post('/pages', { data, headers: authHeaders(owner) })
+  await expectOk(response, 'POST /pages')
+  return (await response.json()) as PageResponse
+}
+
+export async function getPage(
+  api: APIRequestContext,
+  user: Token,
+  pageId: string
+): Promise<PageResponse> {
+  const response = await api.get(`/pages/${pageId}`, { headers: authHeaders(user) })
+  await expectOk(response, `GET /pages/${pageId}`)
+  return (await response.json()) as PageResponse
+}
+
+export async function updatePage(
+  api: APIRequestContext,
+  user: Token,
+  pageId: string,
+  data: UpdatePageData
+): Promise<PageResponse> {
+  const response = await api.patch(`/pages/${pageId}`, { data, headers: authHeaders(user) })
+  await expectOk(response, `PATCH /pages/${pageId}`)
+  return (await response.json()) as PageResponse
+}
+
+export async function movePage(
+  api: APIRequestContext,
+  user: Token,
+  pageId: string,
+  data: MovePageData
+): Promise<PageResponse> {
+  const response = await api.post(`/pages/${pageId}/move`, { data, headers: authHeaders(user) })
+  await expectOk(response, `POST /pages/${pageId}/move`)
+  return (await response.json()) as PageResponse
+}
+
+export async function duplicatePage(
+  api: APIRequestContext,
+  user: Token,
+  pageId: string
+): Promise<PageResponse> {
+  const response = await api.post(`/pages/${pageId}/duplicate`, { headers: authHeaders(user) })
+  await expectOk(response, `POST /pages/${pageId}/duplicate`)
+  return (await response.json()) as PageResponse
+}
+
+export async function trashPage(
+  api: APIRequestContext,
+  user: Token,
+  pageId: string
+): Promise<void> {
+  const response = await api.delete(`/pages/${pageId}`, { headers: authHeaders(user) })
+  await expectOk(response, `DELETE /pages/${pageId}`)
+}
+
+export async function restorePage(
+  api: APIRequestContext,
+  user: Token,
+  pageId: string
+): Promise<PageResponse> {
+  const response = await api.post(`/pages/${pageId}/restore`, { headers: authHeaders(user) })
+  await expectOk(response, `POST /pages/${pageId}/restore`)
+  return (await response.json()) as PageResponse
+}
+
+export async function purgePage(
+  api: APIRequestContext,
+  user: Token,
+  pageId: string
+): Promise<void> {
+  const response = await api.delete(`/pages/${pageId}/permanent`, { headers: authHeaders(user) })
+  await expectOk(response, `DELETE /pages/${pageId}/permanent`)
+}
+
+export async function favoritePage(
+  api: APIRequestContext,
+  user: Token,
+  pageId: string
+): Promise<void> {
+  const response = await api.put(`/pages/${pageId}/favorite`, { headers: authHeaders(user) })
+  await expectOk(response, `PUT /pages/${pageId}/favorite`)
+}
+
+export async function unfavoritePage(
+  api: APIRequestContext,
+  user: Token,
+  pageId: string
+): Promise<void> {
+  const response = await api.delete(`/pages/${pageId}/favorite`, { headers: authHeaders(user) })
+  await expectOk(response, `DELETE /pages/${pageId}/favorite`)
+}
+
+/** Every page of the workspace except trashed ones and database rows. */
+export async function pageTree(
+  api: APIRequestContext,
+  user: Token,
+  workspaceId: string
+): Promise<PageSummary[]> {
+  const response = await api.get(`/workspaces/${workspaceId}/page-tree`, {
+    headers: authHeaders(user),
+  })
+  await expectOk(response, `GET /workspaces/${workspaceId}/page-tree`)
+  return (await response.json()) as PageSummary[]
+}
+
+export async function listTrash(
+  api: APIRequestContext,
+  user: Token,
+  workspaceId: string
+): Promise<PageSummary[]> {
+  const response = await api.get(`/workspaces/${workspaceId}/trash`, {
+    headers: authHeaders(user),
+  })
+  await expectOk(response, `GET /workspaces/${workspaceId}/trash`)
+  return (await response.json()) as PageSummary[]
+}
+
+export async function listFavorites(
+  api: APIRequestContext,
+  user: Token,
+  workspaceId: string
+): Promise<PageSummary[]> {
+  const response = await api.get(`/workspaces/${workspaceId}/favorites`, {
+    headers: authHeaders(user),
+  })
+  await expectOk(response, `GET /workspaces/${workspaceId}/favorites`)
+  return (await response.json()) as PageSummary[]
+}
+
+export async function recentPages(
+  api: APIRequestContext,
+  user: Token,
+  workspaceId: string
+): Promise<PageSummary[]> {
+  const response = await api.get(`/workspaces/${workspaceId}/recent?limit=12`, {
+    headers: authHeaders(user),
+  })
+  await expectOk(response, `GET /workspaces/${workspaceId}/recent`)
+  return (await response.json()) as PageSummary[]
+}
+
+export async function searchPages(
+  api: APIRequestContext,
+  user: Token,
+  workspaceId: string,
+  q: string
+): Promise<SearchResult[]> {
+  const response = await api.get(
+    `/workspaces/${workspaceId}/search?${new URLSearchParams({ q, limit: '20' })}`,
+    { headers: authHeaders(user) }
+  )
+  await expectOk(response, `GET /workspaces/${workspaceId}/search`)
+  return (await response.json()) as SearchResult[]
+}
+
+export async function listRows(
+  api: APIRequestContext,
+  user: Token,
+  databaseId: string
+): Promise<PageResponse[]> {
+  const response = await api.get(`/pages/${databaseId}/rows`, { headers: authHeaders(user) })
+  await expectOk(response, `GET /pages/${databaseId}/rows`)
+  return (await response.json()) as PageResponse[]
+}
+
+export async function getDocument(
+  api: APIRequestContext,
+  user: Token,
+  pageId: string
+): Promise<DocumentResponse> {
+  const response = await api.get(`/pages/${pageId}/document`, { headers: authHeaders(user) })
+  await expectOk(response, `GET /pages/${pageId}/document`)
+  return (await response.json()) as DocumentResponse
+}
+
+/** Merges a base64 Yjs update into the stored document (how a spec seeds page content). */
+export async function putDocument(
+  api: APIRequestContext,
+  user: Token,
+  pageId: string,
+  state: string
+): Promise<DocumentResponse> {
+  const response = await api.put(`/pages/${pageId}/document`, {
+    data: { state },
+    headers: authHeaders(user),
+  })
+  await expectOk(response, `PUT /pages/${pageId}/document`)
+  return (await response.json()) as DocumentResponse
+}
+
+export async function listComments(
+  api: APIRequestContext,
+  user: Token,
+  pageId: string
+): Promise<Comment[]> {
+  const response = await api.get(`/pages/${pageId}/comments`, { headers: authHeaders(user) })
+  await expectOk(response, `GET /pages/${pageId}/comments`)
+  return (await response.json()) as Comment[]
+}
+
+export async function createComment(
+  api: APIRequestContext,
+  user: Token,
+  pageId: string,
+  data: CreateCommentData
+): Promise<Comment> {
+  const response = await api.post(`/pages/${pageId}/comments`, {
+    data,
+    headers: authHeaders(user),
+  })
+  await expectOk(response, `POST /pages/${pageId}/comments`)
+  return (await response.json()) as Comment
+}
+
+export async function updateComment(
+  api: APIRequestContext,
+  user: Token,
+  commentId: string,
+  data: UpdateCommentData
+): Promise<Comment> {
+  const response = await api.patch(`/comments/${commentId}`, { data, headers: authHeaders(user) })
+  await expectOk(response, `PATCH /comments/${commentId}`)
+  return (await response.json()) as Comment
+}
+
+export async function deleteComment(
+  api: APIRequestContext,
+  user: Token,
+  commentId: string
+): Promise<void> {
+  const response = await api.delete(`/comments/${commentId}`, { headers: authHeaders(user) })
+  await expectOk(response, `DELETE /comments/${commentId}`)
+}
+
+/** `GET /public/pages/{public_id}` (no session). */
+export async function getPublicPage(api: APIRequestContext, publicId: string): Promise<PublicPage> {
+  const response = await api.get(`/public/pages/${publicId}`)
+  await expectOk(response, `GET /public/pages/${publicId}`)
+  return (await response.json()) as PublicPage
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +491,29 @@ export async function listItems(api: APIRequestContext, owner: TestUser): Promis
 /** Error toasts (sonner). Assert with toContainText(title) and the backend message. */
 export function errorToast(page: Page) {
   return page.locator('[data-sonner-toast][data-type="error"]')
+}
+
+/** The sidebar (`<aside aria-label="Sidebar">`). */
+export function sidebar(page: Page) {
+  return page.getByRole('complementary', { name: 'Sidebar' })
+}
+
+/** A page row in the sidebar tree, found by its title. */
+export function sidebarPage(page: Page, title: string) {
+  return sidebar(page)
+    .getByRole('treeitem')
+    .filter({ has: page.getByRole('link', { name: title, exact: true }) })
+}
+
+/** Opens the workspace menu at the top of the sidebar. */
+export async function openWorkspaceMenu(page: Page) {
+  await sidebar(page).getByRole('button', { name: 'Switch workspace' }).click()
+}
+
+/** Logs out through the workspace menu. */
+export async function logOut(page: Page) {
+  await openWorkspaceMenu(page)
+  await page.getByRole('button', { name: 'Log out' }).click()
 }
 
 /** The value the app keeps in localStorage for the session, or null when signed out. */

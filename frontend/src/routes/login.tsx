@@ -10,7 +10,7 @@ import { useAuthSubmit } from '@/hooks/useAuthSubmit'
 import { useHydrated } from '@/hooks/useHydrated'
 import { loginSchema, type LoginFormData } from '@/features/auth/auth-schemas'
 
-/** Only an in-app path ('/items'), never a URL or '//host': anything else goes home after sign-in. */
+/** Only an in-app path ('/p/…'), never a URL or '//host': anything else goes to /home after sign-in. */
 function safeRedirect(value: unknown): string | undefined {
   if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//'))
     return undefined
@@ -31,7 +31,7 @@ function Login() {
     API.AUTH.LOGIN,
     'Signed in successfully',
     'Login failed',
-    { to: (redirectTo ?? '/') as '/' }
+    { to: (redirectTo ?? '/home') as '/home' }
   )
 
   const form = useForm<LoginFormData>({
@@ -46,18 +46,18 @@ function Login() {
 
   return (
     <AuthFormShell
-      title="Sign in"
-      description="Enter your email and password to access your account"
+      title="Log in"
+      description="Enter your email and password to open your workspace."
       footer={
-        <div className="mt-4 text-center text-sm text-muted-foreground">
+        <p className="text-muted-foreground mt-6 text-center text-[14px]">
           Don&apos;t have an account?{' '}
           <Link
             to="/register"
-            className="text-primary hover:text-primary/80 underline-offset-4 hover:underline"
+            className="text-primary underline-offset-2 transition-colors duration-100 hover:underline"
           >
-            Create account
+            Sign up
           </Link>
-        </div>
+        </p>
       }
     >
       <Form {...form}>
@@ -71,8 +71,8 @@ function Login() {
         >
           <EmailField control={form.control} name="email" disabled={disabled} />
           <PasswordField control={form.control} name="password" disabled={disabled} />
-          <Button type="submit" className="w-full" disabled={disabled}>
-            {isLoading ? 'Signing in...' : 'Sign in'}
+          <Button type="submit" size="lg" className="mt-2 w-full" disabled={disabled}>
+            {isLoading ? 'Signing in...' : 'Continue'}
           </Button>
         </form>
       </Form>

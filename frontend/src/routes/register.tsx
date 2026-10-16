@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Button } from '@/components/ui/button'
 import { Form } from '@/components/ui/form'
 import { AuthFormShell } from '@/components/AuthFormShell'
-import { EmailField, PasswordField } from '@/components/AuthFormFields'
+import { EmailField, NameField, PasswordField } from '@/components/AuthFormFields'
 import { API } from '@/lib/api-endpoints'
 import { useAuthSubmit } from '@/hooks/useAuthSubmit'
 import { useHydrated } from '@/hooks/useHydrated'
@@ -29,7 +29,7 @@ function Register() {
 
   const form = useForm<RegisterFormData>({
     resolver: zodResolver(registerSchema),
-    defaultValues: { email: '', password: '', confirmPassword: '' },
+    defaultValues: { displayName: '', email: '', password: '', confirmPassword: '' },
   })
 
   // Inert until hydrated, and while the request runs.
@@ -39,18 +39,18 @@ function Register() {
 
   return (
     <AuthFormShell
-      title="Create an account"
-      description="Enter your information to get started"
+      title="Create your account"
+      description="Your workspace is ready in a few seconds."
       footer={
-        <div className="mt-4 text-center text-sm text-muted-foreground">
+        <p className="text-muted-foreground mt-6 text-center text-[14px]">
           Already have an account?{' '}
           <Link
             to="/login"
-            className="text-primary hover:text-primary/80 underline-offset-4 hover:underline"
+            className="text-primary underline-offset-2 transition-colors duration-100 hover:underline"
           >
-            Sign in
+            Log in
           </Link>
-        </div>
+        </p>
       }
     >
       <Form {...form}>
@@ -62,15 +62,22 @@ function Register() {
           onSubmit={form.handleSubmit(onSubmit)}
           className="space-y-4"
         >
+          <NameField control={form.control} name="displayName" disabled={disabled} />
           <EmailField control={form.control} name="email" disabled={disabled} />
-          <PasswordField control={form.control} name="password" disabled={disabled} />
+          <PasswordField
+            control={form.control}
+            name="password"
+            disabled={disabled}
+            autoComplete="new-password"
+          />
           <PasswordField
             control={form.control}
             name="confirmPassword"
             disabled={disabled}
             label="Confirm Password"
+            autoComplete="new-password"
           />
-          <Button type="submit" className="w-full" disabled={disabled}>
+          <Button type="submit" size="lg" className="mt-2 w-full" disabled={disabled}>
             {isLoading ? 'Creating account...' : 'Create account'}
           </Button>
         </form>
