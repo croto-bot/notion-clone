@@ -266,11 +266,32 @@ class PageService(BaseService[Page]):
     async def _visible_parent_or_404(
         self, workspace_id: uuid.UUID, parent_id: uuid.UUID | None
     ) -> Page | None:
-        """The parent for a create/move: same workspace, not trashed, or 404."""
+        """The parent for a create: same workspace, not trashed, or 404."""
         if parent_id is None:
             return None
         parent = await self.repo.get(parent_id, raise_error=False)
         if parent is None or parent.workspace_id != workspace_id:
+            raise NotFoundError(detail=f"Page {parent_id} not found")
+        return parent
+
+    async def _move_parent_or_error(
+        self, page: Page, parent_id: uuid.UUID, user_id: uuid.UUID
+    ) -> Page:
+        """The move's parent, with the move-specific cross-workspace error.
+
+        A create under a foreign parent is a plain 404 (SPEC), but a move
+        under a page of another workspace the user can see is 400
+        invalid_move: the page exists, the tree just cannot reach it.
+        """
+        parent = await self.repo.get(parent_id, raise_error=False)
+        if parent is None:
+            raise NotFoundError(detail=f"Page {parent_id} not found")
+        if parent.workspace_id != page.workspace_id:
+            member = await self.member_repo.get_membership(parent.workspace_id, user_id)
+            if member is not None:
+                raise InvalidMoveError(
+                    detail="A page cannot move under a page of another workspace"
+                )
             raise NotFoundError(detail=f"Page {parent_id} not found")
         return parent
 
@@ -364,10 +385,12 @@ class PageService(BaseService[Page]):
         if parent_id == page_id:
             raise InvalidMoveError()
         if parent_id is not None:
+            parent = await self._move_parent_or_error(page, parent_id, user_id)
             # Serialize against concurrent moves before the subtree check: two
             # moves that each pass the check on stale rows can write a cycle
             # (A under B while B under A). The lock also re-reads the moved
-            # page, so a trash that committed meanwhile is seen here.
+            # page and the parent, so a trash that committed meanwhile is
+            # seen here.
             chain = await self.repo.ancestor_ids(parent_id)
             await self.repo.lock_for_move([page_id, parent_id, *chain])
             if page.deleted_at is not None:
@@ -375,11 +398,10 @@ class PageService(BaseService[Page]):
             subtree = await self.repo.subtree_ids(page_id)
             if parent_id in subtree:
                 raise InvalidMoveError()
-        parent = await self._visible_parent_or_404(page.workspace_id, parent_id)
-        if parent is not None and parent.deleted_at is not None:
-            raise InvalidMoveError(
-                detail="A page cannot move into a page that is in the trash"
-            )
+            if parent.deleted_at is not None:
+                raise InvalidMoveError(
+                    detail="A page cannot move into a page that is in the trash"
+                )
 
         siblings = [
             sibling

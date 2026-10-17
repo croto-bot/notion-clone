@@ -7,8 +7,11 @@ from typing import TYPE_CHECKING
 from tests.e2e.helpers import assert_error, create_page, create_workspace
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import httpx
 
+    from tests.e2e.helpers import RegisteredUser
     from tests.e2e.stack import Database
 
 
@@ -127,3 +130,60 @@ def test_move_in_a_cycled_tree_is_invalid_not_a_hang(
     moved = auth_client.post(f"/pages/{c['id']}/move", json={"parent_id": b["id"]})
     assert moved.status_code == 200
     assert moved.json()["parent_id"] == b["id"]
+
+
+# --- cross-workspace moves (review finding 6) -----------------------------------
+
+
+def test_move_under_another_workspaces_parent_is_invalid(
+    auth_client: httpx.Client,
+) -> None:
+    """A move under a page of another workspace is 400 invalid_move (SPEC).
+
+    The mover is a member of both workspaces, so the parent is visible: the
+    client must see invalid_move, not the 404 a missing page returns.
+    """
+    workspace = create_workspace(auth_client)
+    other_workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"], title="Mover")
+    foreign_parent = create_page(auth_client, other_workspace["id"], title="Foreign")
+
+    response = auth_client.post(
+        f"/pages/{page['id']}/move", json={"parent_id": foreign_parent["id"]}
+    )
+
+    assert_error(response, 400, "invalid_move")
+    assert auth_client.get(f"/pages/{page['id']}").json()["parent_id"] is None
+
+
+def test_move_under_an_invisible_parent_is_404(
+    auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
+) -> None:
+    """A parent of a workspace the mover cannot see stays a plain 404."""
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"], title="Mover")
+    stranger = register_user()
+    stranger_workspace = create_workspace(stranger.client)
+    hidden_parent = create_page(stranger.client, stranger_workspace["id"])
+
+    response = auth_client.post(
+        f"/pages/{page['id']}/move", json={"parent_id": hidden_parent["id"]}
+    )
+
+    assert_error(response, 404, "not_found")
+
+
+def test_create_under_another_workspaces_parent_is_404(
+    auth_client: httpx.Client,
+) -> None:
+    """Create keeps its 404: the SPEC's create contract is unchanged."""
+    workspace = create_workspace(auth_client)
+    other_workspace = create_workspace(auth_client)
+    foreign_parent = create_page(auth_client, other_workspace["id"])
+
+    response = auth_client.post(
+        "/pages",
+        json={"workspace_id": workspace["id"], "parent_id": foreign_parent["id"]},
+    )
+
+    assert_error(response, 404, "not_found")
