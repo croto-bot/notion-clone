@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import asc, case, select, text, update
+from sqlalchemy import asc, case, delete, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.modules.pages.models import Page, PageFavorite, PageKind, PageVisit
@@ -180,26 +180,44 @@ class PageRepository(SQLAlchemyRepository[Page]):
         await self._session.execute(statement)
         await self._session.commit()
 
-    async def detach_trash_roots(
-        self, page_ids: list[uuid.UUID], keep_root_id: uuid.UUID
-    ) -> None:
-        """Move independent trash roots out of a subtree about to be purged.
+    async def purge_subtree(
+        self, root_id: uuid.UUID, delete_ids: list[uuid.UUID]
+    ) -> bool:
+        """Purge a trashed subtree in one transaction; False when it left the trash.
 
-        Without this, the purge's ``ON DELETE CASCADE`` would also delete pages
-        that have their own trash entry; they move to the workspace root,
-        still trashed, and keep their own restore/purge lifecycle.
+        The purged row is locked and its trash flag re-checked first, so a
+        restore that commits before the purge turns it into the same 409 the
+        caller's pre-check produces, and a live page is never deleted. In
+        that same transaction, independent trash roots whose parent is among
+        the deleted rows (only descendants of the purged root can be) move
+        to the workspace root, still trashed; a nested root under a surviving
+        root keeps its parent and its subtree. Then the row delete cascades
+        through the rest and everything commits or rolls back together - no
+        window where survivors sit detached while their old parent still
+        exists.
         """
         statement = (
+            select(Page)
+            .where(Page.id == root_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        row = (await self._session.execute(statement)).scalar_one_or_none()
+        if row is None or row.deleted_at is None:
+            await self._session.rollback()
+            return False
+        await self._session.execute(
             update(Page)
             .where(
-                Page.id.in_(page_ids),
-                Page.id != keep_root_id,
+                Page.id != root_id,
                 Page.deleted_root.is_(True),
+                Page.parent_id.in_(delete_ids),
             )
             .values(parent_id=None)
         )
-        await self._session.execute(statement)
+        await self._session.execute(delete(Page).where(Page.id == root_id))
         await self._session.commit()
+        return True
 
     async def database_rows(self, database_id: uuid.UUID) -> list[Page]:
         statement = (

@@ -689,10 +689,13 @@ class PageService(BaseService[Page]):
         if page.deleted_at is None:
             raise NotInTrashError()
         subtree = await self.repo.subtree_ids(page_id)
-        # Independent trash roots inside the subtree would cascade-delete with
-        # it (parent FK); move them out first, still trashed, at the root.
-        await self.repo.detach_trash_roots(subtree, page_id)
-        await self.repo.delete(page_id)
+        # What this purge deletes: the root's own trash set, i.e. the subtree
+        # minus the independent trash roots inside it and their subtrees.
+        delete_ids = await self._own_trash_ids(page_id, subtree)
+        purged = await self.repo.purge_subtree(page_id, delete_ids)
+        if not purged:
+            # A restore committed after the check above: the row is live.
+            raise NotInTrashError()
         self._log_entity(page_id)
         self._publish(
             page.workspace_id, "page.purged", actor_id=user_id, page_id=page_id

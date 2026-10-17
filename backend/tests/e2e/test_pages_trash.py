@@ -238,6 +238,45 @@ def test_purge_keeps_a_separately_trashed_child(
     assert db.fetch_one("SELECT count(*) FROM pages")[0] == 2
 
 
+def test_purge_keeps_nested_trash_roots_hierarchy(
+    auth_client: httpx.Client,
+) -> None:
+    """Purging the outer page keeps nested trash roots' hierarchy.
+
+    G was trashed under C before C was trashed, and C under P before P, so
+    both keep their own trash entries. The purge of P must move only C (its
+    parent is being deleted) to the workspace root; G stays under C with
+    its own subtree, still trashed, instead of being flattened to the root
+    like the old blanket detach did.
+    """
+    workspace = create_workspace(auth_client)
+    parent = create_page(auth_client, workspace["id"], title="P")
+    child = create_page(auth_client, workspace["id"], parent_id=parent["id"], title="C")
+    grandchild = create_page(
+        auth_client, workspace["id"], parent_id=child["id"], title="G"
+    )
+    great_grandchild = create_page(
+        auth_client, workspace["id"], parent_id=grandchild["id"], title="GG"
+    )
+    assert auth_client.delete(f"/pages/{grandchild['id']}").status_code == 204
+    assert auth_client.delete(f"/pages/{child['id']}").status_code == 204
+    assert auth_client.delete(f"/pages/{parent['id']}").status_code == 204
+
+    response = auth_client.delete(f"/pages/{parent['id']}/permanent")
+
+    assert response.status_code == 204
+    assert_error(auth_client.get(f"/pages/{parent['id']}"), 404, "not_found")
+    child_now = auth_client.get(f"/pages/{child['id']}").json()
+    grandchild_now = auth_client.get(f"/pages/{grandchild['id']}").json()
+    great_now = auth_client.get(f"/pages/{great_grandchild['id']}").json()
+    assert child_now["deleted_at"] is not None
+    assert child_now["parent_id"] is None  # C's parent was purged
+    assert grandchild_now["deleted_at"] is not None
+    assert grandchild_now["parent_id"] == child["id"]  # the hierarchy stays
+    assert great_now["deleted_at"] is not None
+    assert great_now["parent_id"] == grandchild["id"]
+
+
 def test_restore_re_keys_when_a_live_sibling_took_the_position(
     auth_client: httpx.Client,
 ) -> None:
