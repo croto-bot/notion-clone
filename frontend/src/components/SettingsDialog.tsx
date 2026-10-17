@@ -34,7 +34,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useAppShell, type SettingsTab } from '@/contexts/AppShellContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTheme, type Theme } from '@/contexts/ThemeContext'
@@ -301,24 +300,27 @@ function WorkspaceTab() {
       <div className="flex items-end gap-4">
         <div>
           <div className="text-muted-foreground mb-1.5 text-[12px] font-medium">Icon</div>
-          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-            <PopoverTrigger asChild disabled={!isOwner}>
-              <button
-                type="button"
-                aria-label="Change workspace icon"
-                disabled={!isOwner}
-                className="hover:bg-hover grid size-16 place-items-center rounded-[6px] shadow-[inset_0_0_0_1px_var(--input-ring)] transition-colors duration-100 disabled:hover:bg-transparent"
-              >
-                <WorkspaceIcon name={workspace.name} icon={workspace.icon} size={40} />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-auto p-0">
+          {/* The picker renders inline, not in a popover: the modal dialog owns
+              pointer events while open, so a body-portal popover cannot be
+              clicked (Radix modal-dialog behaviour). */}
+          <button
+            type="button"
+            aria-label="Change workspace icon"
+            aria-expanded={pickerOpen}
+            disabled={!isOwner}
+            onClick={() => setPickerOpen(open => !open)}
+            className="hover:bg-hover grid size-16 place-items-center rounded-[6px] shadow-[inset_0_0_0_1px_var(--input-ring)] transition-colors duration-100 disabled:hover:bg-transparent"
+          >
+            <WorkspaceIcon name={workspace.name} icon={workspace.icon} size={40} />
+          </button>
+          {pickerOpen && (
+            <div className="shadow-menu bg-popover mt-2 w-[342px] rounded-[6px] p-1">
               <EmojiPicker
                 onSelect={emoji => void saveIcon(emoji)}
                 onRemove={workspace.icon ? () => void saveIcon(null) : undefined}
               />
-            </PopoverContent>
-          </Popover>
+            </div>
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <label

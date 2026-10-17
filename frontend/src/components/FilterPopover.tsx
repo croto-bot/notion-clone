@@ -136,11 +136,18 @@ function ValueInput({
 export function FilterPopover() {
   const { schema, view, updateView, editable } = useDatabase()
   const filters = view.filters
-  const setFilters = (next: ViewFilter[]) => updateView({ ...view, filters: next })
+  // The popover's selects change in quick succession and each change closes
+  // over this state, so keep the latest view in a ref: a slow render between
+  // two changes must not drop the first one.
+  const viewRef = useRef(view)
+  const setFilters = (next: ViewFilter[]) => {
+    viewRef.current = { ...viewRef.current, filters: next }
+    updateView(viewRef.current)
+  }
 
   const add = () => {
     const first = schema[0]
-    if (first) setFilters([...filters, defaultFilter(first)])
+    if (first) setFilters([...viewRef.current.filters, defaultFilter(first)])
   }
 
   return (
@@ -179,7 +186,9 @@ export function FilterPopover() {
                     const next = schema.find(item => item.id === event.target.value)
                     if (next)
                       setFilters(
-                        filters.map((item, i) => (i === index ? defaultFilter(next) : item))
+                        viewRef.current.filters.map((item, i) =>
+                          i === index ? defaultFilter(next) : item
+                        )
                       )
                   }}
                   className={cn(selectClass, 'w-[110px] shrink-0')}
@@ -198,7 +207,7 @@ export function FilterPopover() {
                     const op = event.target.value as FilterOp
                     const needsValue = opInfo(property.type, op)?.needsValue
                     setFilters(
-                      filters.map((item, i) =>
+                      viewRef.current.filters.map((item, i) =>
                         i === index
                           ? { ...item, op, value: needsValue ? (item.value ?? '') : null }
                           : item
@@ -219,7 +228,9 @@ export function FilterPopover() {
                     filter={filter}
                     onChange={value =>
                       setFilters(
-                        filters.map((item, i) => (i === index ? { ...item, value } : item))
+                        viewRef.current.filters.map((item, i) =>
+                          i === index ? { ...item, value } : item
+                        )
                       )
                     }
                   />
@@ -228,7 +239,9 @@ export function FilterPopover() {
                   <button
                     type="button"
                     aria-label="Remove filter"
-                    onClick={() => setFilters(filters.filter((_, i) => i !== index))}
+                    onClick={() =>
+                      setFilters(viewRef.current.filters.filter((_, i) => i !== index))
+                    }
                     className="text-muted-foreground hover:bg-hover grid size-7 shrink-0 place-items-center rounded-[4px]"
                   >
                     <X className="size-4" />

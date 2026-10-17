@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { ArrowUpDown, Plus, X } from 'lucide-react'
 import { selectClass } from '@/components/FilterPopover'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -9,12 +10,20 @@ import type { SortDirection, ViewSort } from '@/types/database'
 export function SortPopover() {
   const { schema, view, updateView, editable } = useDatabase()
   const sorts = view.sorts
-  const setSorts = (next: ViewSort[]) => updateView({ ...view, sorts: next })
+  // The popover's selects change in quick succession and each change closes
+  // over this state, so keep the latest view in a ref: a slow render between
+  // two changes must not drop the first one.
+  const viewRef = useRef(view)
+  const setSorts = (next: ViewSort[]) => {
+    viewRef.current = { ...viewRef.current, sorts: next }
+    updateView(viewRef.current)
+  }
 
   const add = () => {
-    const used = new Set(sorts.map(sort => sort.property_id))
+    const used = new Set(viewRef.current.sorts.map(sort => sort.property_id))
     const property = schema.find(item => !used.has(item.id)) ?? schema[0]
-    if (property) setSorts([...sorts, { property_id: property.id, direction: 'asc' }])
+    if (property)
+      setSorts([...viewRef.current.sorts, { property_id: property.id, direction: 'asc' }])
   }
 
   return (

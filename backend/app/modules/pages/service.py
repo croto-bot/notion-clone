@@ -407,6 +407,9 @@ class PageService(BaseService[Page]):
         for old_id in self._breadth_first(nodes, page_id):
             node = nodes[old_id]
             is_root_copy = old_id == page_id
+            # The collab room flushes on a debounce: a page duplicated right
+            # after an edit must copy the live document, not the stale row.
+            live_state = self.collab_server.room_state(old_id)
             rows.append(
                 {
                     "id": id_map[old_id],
@@ -428,7 +431,7 @@ class PageService(BaseService[Page]):
                     "public_id": None,
                     "created_by_id": user_id,
                     "last_edited_by_id": user_id,
-                    "ydoc_state": node.ydoc_state,
+                    "ydoc_state": live_state if live_state else node.ydoc_state,
                     "content_text": node.content_text,
                     "database_schema": node.database_schema,
                     "database_views": node.database_views,

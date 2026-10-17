@@ -111,7 +111,12 @@ export function useUpdatePage() {
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: UpdatePageData }) =>
       api.patch<PageResponse>(API.PAGES.DETAIL(id), data),
-    onMutate: ({ id, data }) => {
+    onMutate: async ({ id, data }) => {
+      // Cancel in-flight reads of this page first: a fetch that started before
+      // the change would resolve after the optimistic patch and clobber it
+      // (a filter or favorite that visibly "jumps back").
+      await queryClient.cancelQueries({ queryKey: ['pages', 'detail', id] })
+      await queryClient.cancelQueries({ queryKey: ['pages', 'rows', id] })
       patchPageContent(queryClient, id, data)
       const patch: Parameters<typeof patchPageEverywhere>[2] = {}
       if (data.title !== undefined) patch.title = data.title
@@ -244,6 +249,9 @@ export function useSetFavorite() {
         : api.delete(API.PAGES.FAVORITE(page.id)),
     onMutate: async ({ page, favorite }) => {
       await queryClient.cancelQueries({ queryKey: ['pages', 'favorites'] })
+      // The detail cache holds is_favorite too; an in-flight fetch that
+      // predates the toggle must not clobber the optimistic patch.
+      await queryClient.cancelQueries({ queryKey: ['pages', 'detail', page.id] })
       const snapshot = snapshotLists(queryClient)
       queryClient.setQueryData<PageResponse>(queryKeys.pages.detail(page.id), old =>
         old ? { ...old, is_favorite: favorite } : old

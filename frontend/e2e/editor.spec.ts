@@ -6,6 +6,7 @@ import {
   createPage,
   deleteComment,
   ensureWorkspace,
+  FRONTEND_URL,
   getDocument,
   listComments,
   pageCollabPath,
@@ -250,6 +251,39 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
       .not.toBeNull()
   })
 
+  test('inserts a table and an image from a link', async ({ authedPage: page, api, user }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Media' })
+    const collab = page.waitForEvent('websocket', {
+      predicate: socket => socket.url().includes(pageCollabPath(note.id)),
+      timeout: 20_000,
+    })
+    await page.goto(`/p/${note.id}`)
+    await collab
+    const editor = page.getByTestId('editor')
+    await expect(editor).toBeVisible({ timeout: 15_000 })
+    await editor.click()
+
+    await page.keyboard.type('/table')
+    await page.locator('.bn-suggestion-menu').getByText('Table', { exact: true }).click()
+    const table = editor.locator('[data-content-type="table"]')
+    await expect(table).toBeVisible()
+    await page.keyboard.type('Cell one')
+    await expect(table).toContainText('Cell one')
+
+    // Below the table (its cells hold the cursor), embed an image by URL.
+    await editor.getByRole('paragraph').last().click()
+    await page.keyboard.type('/image')
+    await page.locator('.bn-suggestion-menu').getByText('Image', { exact: true }).click()
+    await page.getByPlaceholder('Enter URL').fill(`${FRONTEND_URL}/favicon.ico`)
+    await page.getByRole('button', { name: 'Embed image' }).click()
+    await expect(page.locator(`img[src="${FRONTEND_URL}/favicon.ico"]`)).toBeVisible()
+
+    await expect
+      .poll(async () => (await getDocument(api, user, note.id)).state, { timeout: 15_000 })
+      .not.toBeNull()
+  })
+
   test('comments update live for both members', async ({
     authedPage: page,
     loginAs,
@@ -347,10 +381,14 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
     await page.getByLabel('Edit comment').fill('Looks great')
     await page.getByLabel('Edit comment').press('Enter')
     await expect(panel.getByText('Looks great')).toBeVisible()
-    const edited = (await listComments(api, user, note.id)).find(
-      item => item.body === 'Looks great'
-    )
-    expect(edited?.edited).toBe(true)
+    // getByText also matches the edit box's own value, so this poll (not the
+    // assertion above) is the proof the edit reached the server.
+    await expect
+      .poll(async () => {
+        const list = await listComments(api, user, note.id)
+        return list.find(item => item.body === 'Looks great')?.edited ?? false
+      })
+      .toBe(true)
 
     // The thread locator filtered on the pre-edit text: re-anchor it.
     const editedThread = panel.getByRole('article').filter({ hasText: 'Looks great' })

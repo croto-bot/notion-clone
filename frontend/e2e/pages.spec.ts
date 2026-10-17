@@ -8,7 +8,9 @@ import {
   duplicatePage,
   ensureWorkspace,
   favoritePage,
+  FRONTEND_URL,
   getPage,
+  getDocument,
   listComments,
   listFavorites,
   listMembers,
@@ -144,7 +146,7 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     ).toBeVisible()
   })
 
-  test('changes font, width and lock from the page menu', async ({
+  test('changes font, width, small text and lock from the page menu', async ({
     authedPage: page,
     api,
     user,
@@ -156,13 +158,24 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     await page.getByRole('button', { name: 'Page options' }).click()
     await page.getByRole('menuitemradio', { name: 'Serif' }).click()
     await page.getByRole('menuitemcheckbox', { name: 'Full width' }).click()
+    await page.getByRole('menuitemcheckbox', { name: 'Small text' }).click()
     await page.getByRole('menuitemcheckbox', { name: 'Lock page' }).click()
-    await expect.poll(async () => (await getPage(api, user, note.id)).font).toBe('serif')
-    const saved = await getPage(api, user, note.id)
-    expect(saved.full_width).toBe(true)
-    expect(saved.locked).toBe(true)
+    // Four PATCHes fire back to back and the menu state is optimistic: poll
+    // until all of them have landed.
+    await expect
+      .poll(async () => {
+        const saved = await getPage(api, user, note.id)
+        return [saved.font, saved.full_width, saved.small_text, saved.locked]
+      })
+      .toEqual(['serif', true, true, true])
     await expect(page.getByTestId('page-scroll')).toHaveAttribute('data-font', 'serif')
-    await updatePage(api, user, note.id, { font: 'default', full_width: false, locked: false })
+    await expect(page.getByTestId('editor')).toHaveClass(/nx-small-text/)
+    await updatePage(api, user, note.id, {
+      font: 'default',
+      full_width: false,
+      small_text: false,
+      locked: false,
+    })
   })
 
   test('sends anonymous users to login', async ({ page, api, user }) => {
@@ -185,11 +198,27 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     await quickFind.getByLabel('Search pages').fill('Needle')
     await expect(quickFind.getByRole('option', { name: /Needle/ })).toBeVisible()
     await page.keyboard.press('ArrowDown')
+    // Opening the page records the visit (GET /pages/{id}); wait for it or the
+    // reload below cancels the request and the visit never lands.
+    const opened = page.waitForResponse(
+      response =>
+        response.url().endsWith(`/pages/${note.id}`) && response.request().method() === 'GET'
+    )
     await page.keyboard.press('Enter')
     await expect(page).toHaveURL(`/p/${note.id}`)
+    await opened
     expect((await searchPages(api, user, workspace.id, 'Needle')).map(item => item.id)).toContain(
       note.id
     )
+
+    // An empty query lists the recently visited pages (F10).
+    await page.goto('/home')
+    await expect(page.getByTestId('workspace-name')).toBeVisible()
+    await page.keyboard.press('Control+k')
+    await expect(quickFind).toBeVisible()
+    await expect(quickFind.getByRole('option', { name: /Needle/ })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(quickFind).toBeHidden()
   })
 
   test('reorders pages in the sidebar with drag and drop', async ({
@@ -346,10 +375,11 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     await panel.getByLabel('Add a page comment').fill('Viewer note')
     await panel.getByRole('button', { name: 'Send comment' }).click()
     await expect(panel.getByText('Viewer note')).toBeVisible()
-    // The Comments button was last clicked on the database page.
-    expect((await listComments(api, user, board.id)).map(item => item.body)).toContain(
-      'Viewer note'
-    )
+    // The Comments button was last clicked on the database page. getByText
+    // matches the composer's own value too, so poll the server for the comment.
+    await expect
+      .poll(async () => (await listComments(api, user, board.id)).map(item => item.body))
+      .toContain('Viewer note')
 
     // The backend refuses the viewer's writes (the page owner checks).
     const blocked = await api.patch(`/pages/${note.id}`, {
@@ -357,5 +387,82 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
       headers: authHeaders(viewer),
     })
     expect(blocked.status()).toBe(403)
+  })
+
+  test('duplicates a page with its children and content', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const parent = await createPage(api, user, { workspace_id: workspace.id, title: 'Original' })
+    await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: parent.id,
+      title: 'Offspring',
+    })
+    const collab = page.waitForEvent('websocket', {
+      predicate: socket => socket.url().includes(pageCollabPath(parent.id)),
+      timeout: 20_000,
+    })
+    await page.goto(`/p/${parent.id}`)
+    await collab
+    const editor = page.getByTestId('editor')
+    await expect(editor).toBeVisible({ timeout: 15_000 })
+    await editor.click()
+    // insertText = one editor transaction, so the whole phrase lands in the Yjs
+    // update as one contiguous string and survives the base64 decode below.
+    await page.keyboard.insertText('Body worth copying')
+    await expect(editor).toContainText('Body worth copying')
+    // Duplicate copies the SAVED document: the collab server persists the Yjs
+    // doc on its own schedule, so wait until the phrase is in the stored state.
+    await expect
+      .poll(
+        async () => {
+          const doc = await getDocument(api, user, parent.id)
+          return doc.state ? Buffer.from(doc.state, 'base64').toString('utf8') : ''
+        },
+        { timeout: 15_000 }
+      )
+      .toContain('Body worth copying')
+    await expect
+      .poll(async () => (await getDocument(api, user, parent.id)).state, { timeout: 15_000 })
+      .not.toBeNull()
+
+    await page.getByRole('button', { name: 'Page options' }).click()
+    await page.getByRole('menuitem', { name: 'Duplicate' }).click()
+    await expect
+      .poll(
+        async () =>
+          (await pageTree(api, user, workspace.id)).filter(item => item.title === 'Original').length
+      )
+      .toBe(2)
+
+    // The copy keeps the child and the content under a new id (F4).
+    const copy = (await pageTree(api, user, workspace.id)).find(
+      item => item.title === 'Original' && item.id !== parent.id
+    )
+    expect(copy).toBeTruthy()
+    const children = (await pageTree(api, user, workspace.id)).filter(
+      item => item.parent_id === copy!.id
+    )
+    expect(children.map(child => child.title)).toEqual(['Offspring'])
+    await page.goto(`/p/${copy!.id}`)
+    await expect(page.getByTestId('editor')).toContainText('Body worth copying', {
+      timeout: 15_000,
+    })
+  })
+
+  test('copies the page link from the page menu', async ({ authedPage: page, api, user }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Linked' })
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+    await page.goto(`/p/${note.id}`)
+
+    await page.getByRole('button', { name: 'Page options' }).click()
+    await page.getByRole('menuitem', { name: 'Copy link' }).click()
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(`${FRONTEND_URL}/p/${note.id}`)
   })
 })

@@ -77,10 +77,14 @@ test.describe('workspaces (F2, F3, F17)', () => {
 
     await settings.getByRole('button', { name: 'Role of Guest' }).click()
     await page.getByRole('menuitem', { name: /Can view/ }).click()
-    expect(
-      (await listMembers(api, user, workspace.id)).find(member => member.email === guest.email)
-        ?.role
-    ).toBe('viewer')
+    // The menu item click does not wait for the role PATCH: poll the server.
+    await expect
+      .poll(
+        async () =>
+          (await listMembers(api, user, workspace.id)).find(member => member.email === guest.email)
+            ?.role
+      )
+      .toBe('viewer')
 
     const guestPage = await loginAs(guest)
     await guestPage.goto('/home')
@@ -139,6 +143,31 @@ test.describe('workspaces (F2, F3, F17)', () => {
     await expect(page.getByTestId('workspace-name')).not.toHaveText('Doomed')
     const gone = await api.get(`/workspaces/${doomed.id}`, { headers: authHeaders(user) })
     expect(gone.status()).toBe(404)
+  })
+
+  test('changes the workspace icon from settings', async ({ authedPage: page, api, user }) => {
+    const workspace = await ensureWorkspace(api, user)
+    await page.goto('/home')
+    await sidebar(page).getByRole('button', { name: 'Settings' }).click()
+    const settings = page.getByRole('dialog', { name: 'Settings' })
+    await settings.getByRole('button', { name: 'Workspace' }).click()
+
+    await settings.getByRole('button', { name: 'Change workspace icon' }).click()
+    // The picker opens inline in the dialog (a body-portal popover is not
+    // clickable while the modal dialog owns pointer events).
+    await settings.getByLabel('Filter emoji').fill('rocket')
+    const emojiButton = settings.locator('button[frimousse-emoji]:visible').first()
+    const emoji = (await emojiButton.textContent()) ?? ''
+    await emojiButton.click()
+
+    await expect
+      .poll(
+        async () => (await listWorkspaces(api, user)).find(item => item.id === workspace.id)?.icon
+      )
+      .toBe(emoji)
+    await page.keyboard.press('Escape')
+    await expect(settings).toBeHidden()
+    await expect(page.getByRole('button', { name: 'Switch workspace' })).toContainText(emoji)
   })
 
   test('renames the account from settings', async ({ authedPage: page, api, user }) => {

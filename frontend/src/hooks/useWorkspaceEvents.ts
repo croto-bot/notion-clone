@@ -67,7 +67,6 @@ export function useWorkspaceEvents(workspaceId: string | undefined) {
     let attempt = 0
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
     let flushTimer: ReturnType<typeof setTimeout> | undefined
-    let hasConnected = false
     const pending = new Set<Refresh>()
 
     const schedule = (kinds: Refresh[]) => {
@@ -85,8 +84,10 @@ export function useWorkspaceEvents(workspaceId: string | undefined) {
       socket = new WebSocket(wsUrl(API.WS.WORKSPACE_EVENTS(workspaceId), token))
       socket.onopen = () => {
         attempt = 0
-        if (hasConnected) schedule(['pages', 'comments', 'members', 'workspaces'])
-        hasConnected = true
+        // Reload on every open, including the first: events published while
+        // the socket was still connecting (before the server subscribed it)
+        // would otherwise never reach this tab.
+        schedule(['pages', 'comments', 'members', 'workspaces'])
       }
       socket.onmessage = message => {
         try {

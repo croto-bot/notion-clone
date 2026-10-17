@@ -52,7 +52,11 @@ test.describe('databases and publish (F13, F15)', () => {
     await title.fill('Fresh')
     await title.press('Enter')
     await expect(page.getByRole('row', { name: 'Fresh' })).toBeVisible()
-    expect((await listRows(api, user, database.id)).map(row => row.title)).toContain('Fresh')
+    // The row is created empty and renamed by the Enter above; the visible
+    // name is the input's own value, so poll for the stored title.
+    await expect
+      .poll(async () => (await listRows(api, user, database.id)).map(row => row.title))
+      .toContain('Fresh')
 
     await page.getByRole('button', { name: 'Filter' }).click()
     await page.getByRole('button', { name: 'Add a filter' }).click()
