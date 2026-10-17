@@ -31,24 +31,29 @@ class InterceptHandler(logging.Handler):
 
 
 class RedactAccessLogQuery(logging.Filter):
-    """Redact sensitive query params in uvicorn access lines.
+    """Redact sensitive query params in uvicorn's request and socket lines.
 
-    uvicorn logs ``'%s - "%s %s HTTP/%s" %d'`` with the path and query string
-    as the third argument; without this filter a token passed in the query
-    string would reach the logs in plain text.
+    uvicorn's access logger emits ``'%s - "%s %s HTTP/%s" %d'`` with the
+    path and query string as an argument, and its WebSocket accept line (on
+    ``uvicorn.error``) emits ``'%s - "WebSocket %s" [accepted]'`` the same
+    way. Without this filter a session token passed in a query string (the
+    collab socket's ``?token=``) would reach the logs in plain text. Any
+    string argument that carries a query string is sanitized, whatever
+    position it sits in.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
         args = record.args
-        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
-            path, separator, query = args[2].partition("?")
-            if separator:
-                record.args = (
-                    *args[:2],
-                    f"{path}?{sanitize_query_string(query)}",
-                    *args[3:],
-                )
+        if isinstance(args, tuple):
+            record.args = tuple(
+                _redact_query(arg) if isinstance(arg, str) else arg for arg in args
+            )
         return True
+
+
+def _redact_query(value: str) -> str:
+    path, separator, query = value.partition("?")
+    return f"{path}?{sanitize_query_string(query)}" if separator else value
 
 
 def _get_log_level() -> str:
@@ -129,24 +134,26 @@ def configure_logging() -> None:
     # Intercept stdlib logging
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
 
-    # Set specific library log levels to reduce noise
+    def _configure_uvicorn_logger(name: str, level: str) -> logging.Logger:
+        uvicorn_logger = logging.getLogger(name)
+        uvicorn_logger.handlers = [InterceptHandler()]
+        uvicorn_logger.setLevel(level)
+        if not any(isinstance(f, RedactAccessLogQuery) for f in uvicorn_logger.filters):
+            uvicorn_logger.addFilter(RedactAccessLogQuery())
+        return uvicorn_logger
+
+    # Set specific library log levels to reduce noise. uvicorn.access stays at
+    # INFO for request lines, and both uvicorn loggers get the query-redaction
+    # filter: the access lines and the WebSocket accept line both carry the
+    # request's query string.
+    _configure_uvicorn_logger("uvicorn.access", "INFO")
+    _configure_uvicorn_logger("uvicorn.error", settings.LOG_UVICORN_ERROR_LEVEL)
     for logger_name in [
         "uvicorn",
-        "uvicorn.error",
-        "uvicorn.access",
         "sqlalchemy.engine",
         "sqlalchemy.pool",
         "httpx",
         "httpcore",
     ]:
         logging.getLogger(logger_name).handlers = [InterceptHandler()]
-        # Keep uvicorn.access at INFO for request logs, others at WARNING
-        if logger_name == "uvicorn.access":
-            access_logger = logging.getLogger(logger_name)
-            access_logger.setLevel(logging.INFO)
-            if not any(
-                isinstance(f, RedactAccessLogQuery) for f in access_logger.filters
-            ):
-                access_logger.addFilter(RedactAccessLogQuery())
-        else:
-            logging.getLogger(logger_name).setLevel(logging.WARNING)
+        logging.getLogger(logger_name).setLevel(logging.WARNING)

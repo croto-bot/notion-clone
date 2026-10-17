@@ -45,6 +45,10 @@ class LoggingSettings(BaseSettings):
 
     LOG_LEVEL: str = Field(default="INFO")
     LOG_FORMAT: str = Field(default="console")  # "console" or "json"
+    # uvicorn's non-access logger (startup, shutdown, WebSocket accepts) is
+    # quiet by default; raise it (e.g. the e2e stack sets INFO) to see those
+    # lines - the sensitive-query filter redacts them either way.
+    LOG_UVICORN_ERROR_LEVEL: str = Field(default="WARNING")
     VERSION: str | None = Field(default=None)
     COMMIT_HASH: str | None = Field(default=None)
     INSTANCE_ID: str | None = Field(default=None)

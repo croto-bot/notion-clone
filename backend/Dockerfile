@@ -43,4 +43,4 @@ USER app
 EXPOSE 9095
 
 # `exec` hands PID 1 to uvicorn so SIGTERM stops the server cleanly.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn --no-access-log --host=0.0.0.0 --port=9095 --factory app.main:create_app"]
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn --host=0.0.0.0 --port=9095 --factory app.main:create_app"]

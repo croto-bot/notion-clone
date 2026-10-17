@@ -62,8 +62,10 @@ def test_session_token_never_appears_in_the_server_output(
     server: LiveServer, auth_client: httpx.Client, server_log: ServerLogView
 ) -> None:
     """Sessions ride in the Authorization header and in socket query strings;
-    neither may leak into what the server prints (uvicorn's default access log
-    echoes the whole request line, `?token=` included)."""
+    neither may leak into what the server prints. uvicorn's WebSocket accept
+    line (uvicorn.error) echoes the whole socket path - ``?token=`` included -
+    and its access lines echo request query strings; both must come out
+    redacted, not merely suppressed."""
     workspace = create_workspace(auth_client)
     page = create_page(auth_client, workspace["id"])
     token = auth_client.headers["Authorization"].removeprefix("Bearer ")
@@ -75,6 +77,14 @@ def test_session_token_never_appears_in_the_server_output(
     with connect(socket_url, open_timeout=5):
         auth_client.get(f"/pages/{page['id']}")
 
+    # The accept line was emitted with the token redacted (the e2e stack
+    # raises uvicorn.error to INFO so the line exists to check).
+    accept = server_log.wait_for(
+        lambda e: '"WebSocket /pages/' in e["message"] and "[accepted]" in e["message"]
+    )
+    assert f"/pages/{page['id']}/collab?token=[REDACTED]" in accept["message"], accept[
+        "message"
+    ]
     assert token not in server_log.text()
 
 

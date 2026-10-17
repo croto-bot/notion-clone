@@ -115,6 +115,9 @@ def server_environment(db_url: str) -> dict[str, str]:
         "DEBUG_MODE": "false",
         # DEBUG so the "no secrets in the logs" tests also see debug lines.
         "LOG_LEVEL": "DEBUG",
+        # INFO on uvicorn.error emits the WebSocket accept lines, so their
+        # token redaction is exercised by the leak tests.
+        "LOG_UVICORN_ERROR_LEVEL": "INFO",
         # JSON lines on stdout: the suite parses them (see ServerLog).
         "LOG_FORMAT": "json",
         "FRONTEND_URL": FRONTEND_URL,
@@ -431,7 +434,6 @@ class LiveServer:
                 "tests.e2e.run_server",
                 "--factory",
                 "app.main:create_app",
-                "--no-access-log",
                 "--host",
                 "127.0.0.1",
                 "--port",
