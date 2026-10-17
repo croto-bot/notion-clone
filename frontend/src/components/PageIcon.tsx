@@ -5,19 +5,27 @@ import type { PageKind } from '@/types/page'
 interface PageIconProps {
   icon: string | null | undefined
   kind?: PageKind
-  /** Box size in px. The emoji is a little smaller than the box. */
+  /** Box size in px. */
   size?: number
+  /** Emoji font size as a share of the box. Small icons use a slightly smaller emoji. */
+  emojiScale?: number
   className?: string
 }
 
 /** The emoji of a page, or Notion's page glyph (a table glyph for databases). */
-export function PageIcon({ icon, kind = 'page', size = 20, className }: PageIconProps) {
+export function PageIcon({
+  icon,
+  kind = 'page',
+  size = 20,
+  emojiScale = 0.82,
+  className,
+}: PageIconProps) {
   if (icon) {
     return (
       <span
         aria-hidden="true"
         className={cn('inline-flex shrink-0 items-center justify-center leading-none', className)}
-        style={{ width: size, height: size, fontSize: Math.round(size * 0.82) }}
+        style={{ width: size, height: size, fontSize: Math.round(size * emojiScale) }}
       >
         {icon}
       </span>

@@ -133,7 +133,7 @@ function SharePage() {
             data-testid="page-icon"
             className={cn('relative z-10 size-[78px]', hasCover ? '-mt-[39px]' : 'mt-[56px]')}
           >
-            <PageIcon icon={page.icon} size={78} className="!text-[78px] !leading-[1.1]" />
+            <PageIcon icon={page.icon} size={78} emojiScale={1} />
           </div>
         ) : (
           <div className={hasCover ? 'h-[24px]' : 'h-[72px]'} />

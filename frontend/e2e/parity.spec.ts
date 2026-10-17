@@ -202,10 +202,10 @@ async function expectPageIcon(page: Page, coverBox: { y: number; height: number 
   const icon = page.getByTestId('page-icon')
   const iconBox = await box(icon)
   near(iconBox.width, METRICS.iconSize, 'icon box')
-  const emojiSize = await icon.evaluate(element =>
-    parseFloat(getComputedStyle(element.querySelector('span') ?? element).fontSize)
-  )
-  near(emojiSize, METRICS.iconSize, 'icon size')
+  const emoji = icon.locator('span[aria-hidden="true"]')
+  await expect(emoji, 'the icon is a PageIcon').toBeVisible()
+  near((await box(emoji)).width, METRICS.iconSize, 'emoji box')
+  near(await px(emoji, 'font-size'), METRICS.iconSize, 'emoji size')
   expect.soft(iconBox.y, 'icon overlaps the cover').toBeLessThan(coverBox.y + coverBox.height)
 }
 
