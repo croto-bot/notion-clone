@@ -234,10 +234,8 @@ class CollabServer:
     async def _flush_loop(self) -> None:
         while True:
             await asyncio.sleep(FLUSH_INTERVAL_S)
-            try:
-                await self.flush_all()
-            except Exception as exc:  # noqa: BLE001 - keep the loop alive
-                logger.error("collab flush failed: {exc}", exc=exc)
+            # flush_all() catches and logs each page's failure itself.
+            await self.flush_all()
 
     async def flush_all(self) -> None:
         for name in list(self._dirty):
@@ -311,9 +309,6 @@ class CollabServer:
             },
             client_id=client_id,
         )
-
-    def dirty_pages(self) -> set[str]:  # observability for logs
-        return set(self._dirty)
 
 
 def get_collab_server() -> CollabServer:

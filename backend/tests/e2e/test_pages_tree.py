@@ -11,6 +11,7 @@ from tests.e2e.helpers import (
     create_workspace,
     held_db_lock,
     make_member,
+    wait_for_blocked_queries,
     wait_until_blocked,
 )
 
@@ -356,3 +357,63 @@ def test_viewer_cannot_patch_pages(
 
     assert_error(response, 403, "forbidden")
     assert auth_client.get(f"/pages/{page['id']}").json()["title"] == "Original"
+
+
+def test_create_under_a_trashed_parent_is_404(auth_client: httpx.Client) -> None:
+    workspace = create_workspace(auth_client)
+    parent = create_page(auth_client, workspace["id"], title="Parent")
+    auth_client.delete(f"/pages/{parent['id']}")
+
+    response = auth_client.post(
+        "/pages",
+        json={"workspace_id": workspace["id"], "parent_id": parent["id"], "title": "C"},
+    )
+
+    assert_error(response, 404, "not_found", f"Page {parent['id']} not found")
+    tree = auth_client.get(f"/workspaces/{workspace['id']}/page-tree").json()
+    assert tree == []
+
+
+def test_rename_racing_a_purge_is_404(auth_client: httpx.Client, db: Database) -> None:
+    """A PATCH whose page is purged mid-request answers 404, not 500.
+
+    A held row lock parks the PATCH's UPDATE after the request has read the
+    page; the lock holder then deletes the row (a purge's end state).
+    """
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"], title="Old")
+    box: dict[str, Any] = {}
+
+    def _rename() -> None:
+        box["response"] = auth_client.patch(
+            f"/pages/{page['id']}", json={"title": "New"}
+        )
+
+    with held_db_lock(
+        db, "SELECT id FROM pages WHERE id = %s FOR UPDATE", (page["id"],)
+    ) as lock_conn:
+        thread = threading.Thread(target=_rename)
+        thread.start()
+        wait_for_blocked_queries(db, count=1, needle="UPDATE pages")
+        lock_conn.execute("DELETE FROM pages WHERE id = %s", (page["id"],))
+    thread.join(timeout=30)
+
+    assert_error(box["response"], 404, "not_found", f"Page {page['id']} not found")
+    assert_error(auth_client.get(f"/pages/{page['id']}"), 404, "not_found")
+
+
+def test_page_of_a_deleted_author_has_no_author(
+    auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
+) -> None:
+    """Deleting an account keeps the pages it wrote in other workspaces;
+    their created_by and last_edited_by become null."""
+    workspace = create_workspace(auth_client)
+    author = make_member(register_user, auth_client, workspace["id"], role="editor")
+    page = create_page(author.client, workspace["id"], title="Orphan")
+
+    assert author.client.delete("/users/me").status_code == 204
+
+    got = auth_client.get(f"/pages/{page['id']}")
+    assert got.status_code == 200
+    assert (got.json()["created_by"], got.json()["last_edited_by"]) == (None, None)
+    assert got.json()["title"] == "Orphan"

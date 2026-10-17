@@ -84,10 +84,6 @@ class WorkspaceEventBus:
                 # state on the next one. Never block the publishing request.
                 continue
 
-    def subscriber_count(self, workspace_id: uuid.UUID) -> int:
-        """Number of live subscribers (observability, used by logs)."""
-        return len(self._subscribers.get(workspace_id, ()))
-
 
 def get_event_bus() -> WorkspaceEventBus:
     """Return the process-wide bus (one backend process serves every socket)."""

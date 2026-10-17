@@ -1,7 +1,9 @@
 """WebSocket channel adapters for the collab socket.
 
 ``StarletteChannel`` adapts a Starlette/FastAPI ``WebSocket`` to pycrdt's
-``Channel`` protocol (what ``YRoom.serve`` consumes). ``ReadOnlyChannel``
+``Channel`` send/recv. ``YRoom.serve`` iterates the outermost wrapper
+(``ReadOnlyChannel`` or ``WriteTrackingChannel``): only those two define
+``__aiter__``/``__anext__``. ``ReadOnlyChannel``
 drops a client's document (sync) messages while awareness keeps flowing,
 ``WriteTrackingChannel`` records who last sent a document update, and
 ``GuardedChannel`` re-checks write access before each document push a
@@ -52,7 +54,7 @@ class Channel(Protocol):
 
 
 class StarletteChannel:
-    """A Starlette WebSocket as a pycrdt Channel."""
+    """A Starlette WebSocket as a pycrdt Channel (send/recv; always wrapped)."""
 
     def __init__(self, websocket: WebSocket, path: str) -> None:
         self._websocket = websocket
@@ -80,12 +82,6 @@ class StarletteChannel:
         except WebSocketDisconnect as exc:
             raise StopAsyncIteration from exc
         return bytes(message)
-
-    def __aiter__(self) -> StarletteChannel:
-        return self
-
-    async def __anext__(self) -> bytes:
-        return await self.recv()
 
 
 class ReadOnlyChannel:
@@ -181,9 +177,3 @@ class GuardedChannel:
                     continue  # dropped, like a read-only client's push
                 return message
             return message
-
-    def __aiter__(self) -> GuardedChannel:
-        return self
-
-    async def __anext__(self) -> bytes:
-        return await self.recv()

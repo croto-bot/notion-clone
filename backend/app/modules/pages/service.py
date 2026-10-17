@@ -75,9 +75,10 @@ def _default_database_views() -> list[dict[str, Any]]:
 
 
 def _snippet(text: str, query: str) -> str:
-    """A window of ``text`` around the first case-insensitive match."""
-    if not text:
-        return ""
+    """A window of ``text`` around the first case-insensitive match.
+
+    No match (or an empty text) gives the start of the text.
+    """
     index = text.casefold().find(query.casefold())
     if index < 0:
         return text[: 2 * SNIPPET_RADIUS].strip()
@@ -227,7 +228,7 @@ class PageService(BaseService[Page]):
         favorite = await self.favorite_repo.get_favorite(member.user_id, page.id)
         users: dict[uuid.UUID, User] = {}
         for user_id in {page.created_by_id, page.last_edited_by_id}:
-            if user_id is not None and user_id not in users:
+            if user_id is not None:
                 user = await self.user_repo.get(user_id, raise_error=False)
                 if user is not None:
                     users[user_id] = user
@@ -722,10 +723,6 @@ class PageService(BaseService[Page]):
     async def database_rows_of(self, page: Page) -> list[Page]:
         """Rows of a database page, without an access check (public pages)."""
         return await self.repo.database_rows(page.id)
-
-    async def detail_of(self, page: Page, member: WorkspaceMember) -> PageDetail:
-        """Everything PageResponse adds around the row."""
-        return await self._detail(page, member)
 
     async def _require_member(
         self, workspace_id: uuid.UUID, user_id: uuid.UUID

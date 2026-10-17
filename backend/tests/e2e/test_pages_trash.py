@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING, Any
 
 from tests.e2e.helpers import (
     assert_error,
     create_page,
     create_workspace,
+    held_db_lock,
     make_member,
+    wait_for_blocked_queries,
 )
 
 if TYPE_CHECKING:
@@ -342,3 +345,43 @@ def test_viewer_cannot_purge_pages(
 
     assert_error(response, 403, "forbidden")
     assert auth_client.get(f"/pages/{page['id']}").json()["deleted_at"] is not None
+
+
+def test_restore_a_page_that_is_not_in_the_trash_conflicts(
+    auth_client: httpx.Client,
+) -> None:
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"], title="Live")
+
+    response = auth_client.post(f"/pages/{page['id']}/restore")
+
+    assert_error(response, 409, "not_in_trash")
+    assert auth_client.get(f"/pages/{page['id']}").json()["deleted_at"] is None
+    assert auth_client.get(f"/workspaces/{workspace['id']}/trash").json() == []
+
+
+def test_restore_racing_a_purge_is_404(auth_client: httpx.Client, db: Database) -> None:
+    """A restore whose page is purged mid-request answers 404, not 500.
+
+    A held row lock parks the restore's UPDATE after the request has read
+    the page; the lock holder then deletes the row (a purge's end state).
+    """
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"], title="Doomed")
+    auth_client.delete(f"/pages/{page['id']}")
+    box: dict[str, Any] = {}
+
+    def _restore() -> None:
+        box["response"] = auth_client.post(f"/pages/{page['id']}/restore")
+
+    with held_db_lock(
+        db, "SELECT id FROM pages WHERE id = %s FOR UPDATE", (page["id"],)
+    ) as lock_conn:
+        thread = threading.Thread(target=_restore)
+        thread.start()
+        wait_for_blocked_queries(db, count=1, needle="UPDATE pages")
+        lock_conn.execute("DELETE FROM pages WHERE id = %s", (page["id"],))
+    thread.join(timeout=30)
+
+    assert_error(box["response"], 404, "not_found", f"Page {page['id']} not found")
+    assert auth_client.get(f"/workspaces/{workspace['id']}/trash").json() == []

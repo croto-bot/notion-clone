@@ -23,12 +23,15 @@ coverage report that includes the server process). No `.env` and no running
 database are needed. Per session:
 
 1. testcontainers starts Postgres with the `db` image from `docker-compose.yml`.
-2. `alembic upgrade head`, then `alembic check` (Guard 3).
+2. `alembic upgrade head`, `alembic downgrade base`, `alembic upgrade head`
+   again and `alembic upgrade head --sql` (every migration must reverse and
+   render offline), then `alembic check` (Guard 3).
 3. The real app starts in a child process:
    `uvicorn --factory app.main:create_app` on 127.0.0.1, free port, settings
    from env vars only (`LOG_FORMAT=json`, `ENVIRONMENT=local` so Sentry is off,
-   Google endpoints point at a closed local port). `tests/e2e/run_server.py`
-   stops the server if pytest dies.
+   Google endpoints point at a closed local port, `DB_URL` in the
+   `postgresql+asyncpg://` form, `VERSION`/`COMMIT_HASH`/`INSTANCE_ID` set).
+   `tests/e2e/run_server.py` stops the server if pytest dies.
 4. Before **each** test, every application table is truncated. Tests pass in
    any order.
 

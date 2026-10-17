@@ -126,3 +126,20 @@ def test_search_children_and_breadcrumbs_from_one_workspace_pass(
     assert [hit["id"] for hit in results] == [leaf["id"]]
     assert [b["title"] for b in results[0]["breadcrumbs"]] == ["Root", "Mid"]
     assert results[0]["has_children"] is False
+
+
+def test_snippet_is_the_start_of_the_text_when_case_folding_differs(
+    auth_client: httpx.Client,
+) -> None:
+    """Postgres ILIKE matches "İ" (dotted capital I) to "i"; Python's casefold
+    does not. The page is found, and its snippet is the start of its text."""
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"], title="Plain")
+    _put_text(auth_client, page["id"], "İstanbul trip notes")
+
+    results = auth_client.get(
+        f"/workspaces/{workspace['id']}/search", params={"q": "istanbul"}
+    ).json()
+
+    assert [r["id"] for r in results] == [page["id"]]
+    assert results[0]["snippet"] == "İstanbul trip notes"

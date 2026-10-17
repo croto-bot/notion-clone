@@ -504,3 +504,39 @@ def test_merely_opening_the_page_does_not_take_over_last_edited_by(
 
     detail = auth_client.get(f"/pages/{page['id']}").json()
     assert detail["last_edited_by"]["id"] == owner_id
+
+
+def test_removal_while_socket_open_stops_the_writes(
+    server: LiveServer,
+    auth_client: httpx.Client,
+    db: Database,
+    register_user: Callable[..., RegisteredUser],
+) -> None:
+    """An editor removed from the workspace after connect must not write."""
+    workspace = create_workspace(auth_client)
+    editor = make_member(register_user, auth_client, workspace["id"], role="editor")
+    page = create_page(auth_client, workspace["id"])
+    url = _collab_url(server, page["id"], editor.session_id)
+
+    with connect(url, open_timeout=5) as conn:
+        doc, _ = doc_with_text()
+        yjs_sync(conn, doc)
+        _edit(doc, "as a member")
+        yjs_send_update(conn, doc)
+        yjs_wait_for(conn, doc, "as a member")
+        _await_flushed(db, page["id"], "as a member")  # stored before the removal
+        removed = auth_client.delete(
+            f"/workspaces/{workspace['id']}/members/{editor.id}"
+        )
+        assert removed.status_code == 204
+        _edit(doc, "typed after the removal")
+        yjs_send_update(conn, doc)
+        time.sleep(0.3)  # the push is served (and dropped) by then
+    time.sleep(FLUSH_WAIT_S)
+
+    stored = auth_client.get(f"/pages/{page['id']}/document").json()
+    stored_doc = Doc()
+    stored_doc.apply_update(base64.b64decode(stored["state"]))
+    text = _doc_text(stored_doc)
+    assert "as a member" in text
+    assert "typed after the removal" not in text

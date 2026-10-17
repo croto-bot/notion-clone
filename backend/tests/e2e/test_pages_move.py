@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from tests.e2e.helpers import (
@@ -392,3 +393,121 @@ def test_viewer_cannot_move_pages(
 
     assert_error(response, 403, "forbidden")
     assert auth_client.get(f"/pages/{page['id']}").json()["parent_id"] is None
+
+
+def test_move_into_a_trashed_parent_is_invalid(auth_client: httpx.Client) -> None:
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"], title="Mover")
+    trashed = create_page(auth_client, workspace["id"], title="Trashed")
+    auth_client.delete(f"/pages/{trashed['id']}")
+
+    response = auth_client.post(
+        f"/pages/{page['id']}/move", json={"parent_id": trashed["id"]}
+    )
+
+    assert_error(
+        response,
+        400,
+        "invalid_move",
+        "A page cannot move into a page that is in the trash",
+    )
+    assert auth_client.get(f"/pages/{page['id']}").json()["parent_id"] is None
+
+
+def test_move_under_a_missing_parent_is_404(auth_client: httpx.Client) -> None:
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"], title="Mover")
+    missing = str(uuid.uuid4())
+
+    response = auth_client.post(
+        f"/pages/{page['id']}/move", json={"parent_id": missing}
+    )
+
+    assert_error(response, 404, "not_found", f"Page {missing} not found")
+    assert auth_client.get(f"/pages/{page['id']}").json()["parent_id"] is None
+
+
+def test_move_of_another_workspaces_page_is_404(
+    auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
+) -> None:
+    """A non-member cannot move a page: the same 404 as a missing page."""
+    workspace = create_workspace(auth_client)
+    parent = create_page(auth_client, workspace["id"], title="Parent")
+    page = create_page(auth_client, workspace["id"], parent_id=parent["id"])
+    stranger = register_user()
+
+    response = stranger.client.post(
+        f"/pages/{page['id']}/move", json={"parent_id": None}
+    )
+
+    assert_error(response, 404, "not_found", f"Page {page['id']} not found")
+    assert auth_client.get(f"/pages/{page['id']}").json()["parent_id"] == parent["id"]
+
+
+def test_move_racing_a_purge_is_404(
+    auth_client: httpx.Client, make_client: Callable[..., httpx.Client], db: Database
+) -> None:
+    """A move parked on the workspace tree lock re-reads the page after it.
+
+    While the move waits, the row is deleted (a purge's end state; an API
+    purge would wait on the same lock). The move must answer 404, not 500.
+    """
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"], title="Mover")
+    token = auth_client.headers["Authorization"].removeprefix("Bearer ")
+    box: dict[str, Any] = {}
+
+    def _move(client: httpx.Client) -> None:
+        box["response"] = client.post(
+            f"/pages/{page['id']}/move", json={"parent_id": None}
+        )
+
+    with held_db_lock(
+        db,
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        (workspace["id"],),
+    ):
+        thread = threading.Thread(target=_move, args=(make_client(token),))
+        thread.start()
+        wait_for_blocked_queries(db, count=1, needle="pg_advisory_xact_lock")
+        assert db.execute("DELETE FROM pages WHERE id = %s", (page["id"],))
+    thread.join(timeout=30)
+
+    assert_error(box["response"], 404, "not_found", f"Page {page['id']} not found")
+    assert_error(auth_client.get(f"/pages/{page['id']}"), 404, "not_found")
+
+
+def test_move_racing_the_movers_removal_is_404(
+    auth_client: httpx.Client,
+    register_user: Callable[..., RegisteredUser],
+    db: Database,
+) -> None:
+    """The role is re-read after the tree lock: a member removed while the
+    move waits gets a 404, and the page stays where it was."""
+    workspace = create_workspace(auth_client)
+    parent = create_page(auth_client, workspace["id"], title="Parent")
+    page = create_page(auth_client, workspace["id"], parent_id=parent["id"])
+    editor = make_member(register_user, auth_client, workspace["id"], role="editor")
+    box: dict[str, Any] = {}
+
+    def _move() -> None:
+        box["response"] = editor.client.post(
+            f"/pages/{page['id']}/move", json={"parent_id": None}
+        )
+
+    with held_db_lock(
+        db,
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        (workspace["id"],),
+    ):
+        thread = threading.Thread(target=_move)
+        thread.start()
+        wait_for_blocked_queries(db, count=1, needle="pg_advisory_xact_lock")
+        assert db.execute(
+            "DELETE FROM workspace_members WHERE workspace_id = %s AND user_id = %s",
+            (workspace["id"], editor.id),
+        )
+    thread.join(timeout=30)
+
+    assert_error(box["response"], 404, "not_found", f"Page {page['id']} not found")
+    assert auth_client.get(f"/pages/{page['id']}").json()["parent_id"] == parent["id"]
