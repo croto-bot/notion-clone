@@ -8,6 +8,8 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
+from websockets.sync.client import connect
+
 from tests.e2e.helpers import (
     assert_error,
     create_page,
@@ -23,7 +25,7 @@ if TYPE_CHECKING:
     import httpx
 
     from tests.e2e.helpers import RegisteredUser
-    from tests.e2e.stack import Database, ServerLogView
+    from tests.e2e.stack import Database, LiveServer, ServerLogView
 
 
 def test_each_request_emits_exactly_one_wide_event(
@@ -54,6 +56,26 @@ def test_each_request_emits_exactly_one_wide_event(
         e for e in server_log.events() if e.get("trace_id") == event["trace_id"]
     ]
     assert len(same_request) == 1
+
+
+def test_session_token_never_appears_in_the_server_output(
+    server: LiveServer, auth_client: httpx.Client, server_log: ServerLogView
+) -> None:
+    """Sessions ride in the Authorization header and in socket query strings;
+    neither may leak into what the server prints (uvicorn's default access log
+    echoes the whole request line, `?token=` included)."""
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+    token = auth_client.headers["Authorization"].removeprefix("Bearer ")
+    socket_url = (
+        f"{server.base_url.replace('http://', 'ws://')}"
+        f"/pages/{page['id']}/collab?token={token}"
+    )
+
+    with connect(socket_url, open_timeout=5):
+        auth_client.get(f"/pages/{page['id']}")
+
+    assert token not in server_log.text()
 
 
 def test_wide_event_names_the_route_template(

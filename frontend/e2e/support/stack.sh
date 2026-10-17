@@ -112,7 +112,7 @@ start_backend() {
     exit 1
   fi
   rm -f "$migrate_log"
-  uv run --frozen uvicorn --factory app.main:create_app \
+  uv run --frozen uvicorn --no-access-log --factory app.main:create_app \
     --host 127.0.0.1 --port "$E2E_BACKEND_PORT" --log-level warning &
   server=$!
   trap 'kill -TERM "$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true' EXIT

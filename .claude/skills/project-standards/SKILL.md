@@ -79,7 +79,7 @@ with `docker-compose.yml`).
   plural and kebab-case (`/items`).
 - **Style:** ruff only (check + format, default line length 88). Type hints
   everywhere. Every package has `__init__.py`; public packages define `__all__`.
-- **Run locally:** `cd backend && make run` (=`uv run uvicorn --factory app.main:create_app --reload --port 9095`).
+- **Run locally:** `cd backend && make run` (=`uv run uvicorn --no-access-log --factory app.main:create_app --reload --port 9095`).
 
 ## 2. Frontend rules (`frontend/`)
 

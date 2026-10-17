@@ -59,7 +59,7 @@ check:
 
 # Run the FastAPI application
 run:
-	uv run uvicorn --factory app.main:create_app --reload --port 9095
+	uv run uvicorn --no-access-log --factory app.main:create_app --reload --port 9095
 
 # Run the end-to-end suite: real Postgres (Docker) + migrations + live server
 test:

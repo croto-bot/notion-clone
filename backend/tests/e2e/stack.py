@@ -431,6 +431,7 @@ class LiveServer:
                 "tests.e2e.run_server",
                 "--factory",
                 "app.main:create_app",
+                "--no-access-log",
                 "--host",
                 "127.0.0.1",
                 "--port",
