@@ -147,23 +147,29 @@ class PageRepository(SQLAlchemyRepository[Page]):
         return [row for (row,) in result.all()]
 
     async def lock_for_move(self, page_ids: list[uuid.UUID]) -> list[Page]:
-        """Row-lock the pages a move touches, in a stable order (no commit).
+        """Fresh row locks for a move, one row at a time in sorted id order.
 
-        Locking the moved page, the new parent and the parent's ancestor chain
-        serializes concurrent moves that could form a cycle: whoever locks
-        second re-reads the committed edges before its subtree check. The
-        order by id keeps every locker waiting in the same order, so two
-        moves cannot deadlock on each other. The caller's update commit (or
-        its rollback on error) releases the locks.
+        Loading full rows with populate_existing refreshes the identity-mapped
+        copies (expire_on_commit=False would keep them stale otherwise), so
+        the post-lock trash checks read committed state. Locking one row per
+        statement, smallest id first, is what makes the ordering claim hold:
+        every move grabs the same rows in the same order, so two overlapping
+        moves queue on the first row instead of deadlocking, and no move ever
+        waits holding rows a peer wants first. The caller's commit (or its
+        rollback on error) releases the locks.
         """
-        statement = (
-            select(Page)
-            .where(Page.id.in_(page_ids))
-            .order_by(Page.id)
-            .with_for_update()
-        )
-        result = await self._session.execute(statement)
-        return list(result.scalars().all())
+        rows: list[Page] = []
+        for page_id in sorted(set(page_ids)):
+            statement = (
+                select(Page)
+                .where(Page.id == page_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            row = (await self._session.execute(statement)).scalar_one_or_none()
+            if row is not None:
+                rows.append(row)
+        return rows
 
     async def mark_trashed(
         self, page_ids: list[uuid.UUID], root_id: uuid.UUID, now: datetime

@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import threading
+import uuid
+from typing import TYPE_CHECKING, Any
 
 from tests.e2e.helpers import (
     assert_error,
     create_page,
     create_workspace,
+    held_db_lock,
     make_member,
+    wait_for_blocked_queries,
 )
 
 if TYPE_CHECKING:
@@ -194,6 +198,104 @@ def test_create_under_another_workspaces_parent_is_404(
     )
 
     assert_error(response, 404, "not_found")
+
+
+# --- overlapping moves and stale reads under the row locks ----------------------
+
+
+def test_overlapping_cycle_moves_one_succeeds_one_is_invalid(
+    auth_client: httpx.Client, make_client: Callable[..., httpx.Client]
+) -> None:
+    """Two moves that would form a cycle: one wins, one gets invalid_move.
+
+    The moves lock the same two rows (each page is the other's target
+    parent), so they serialize: whoever locks second re-reads the committed
+    edges and its subtree check fails. Never a 500, never a written cycle.
+    """
+    workspace = create_workspace(auth_client)
+    a = create_page(auth_client, workspace["id"], title="A")
+    b = create_page(auth_client, workspace["id"], title="B")
+    token = auth_client.headers["Authorization"].removeprefix("Bearer ")
+    moves = {a["id"]: b["id"], b["id"]: a["id"]}  # page -> new parent
+    responses: list[httpx.Response] = []
+    barrier = threading.Barrier(2)
+
+    def _move(client: httpx.Client, page_id: str) -> None:
+        barrier.wait(timeout=10)
+        responses.append(
+            client.post(f"/pages/{page_id}/move", json={"parent_id": moves[page_id]})
+        )
+
+    threads = [
+        threading.Thread(target=_move, args=(make_client(token), page_id))
+        for page_id in moves
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert sorted(response.status_code for response in responses) == [200, 400], [
+        response.text for response in responses
+    ]
+    rejected = next(r for r in responses if r.status_code == 400)
+    assert rejected.json()["error_code"] == "invalid_move"
+
+    tree = auth_client.get(f"/workspaces/{workspace['id']}/page-tree").json()
+    assert {page["title"] for page in tree} == {"A", "B"}  # no cycle: both live
+    moved = next(r for r in responses if r.status_code == 200).json()
+    now = auth_client.get(f"/pages/{moved['id']}").json()
+    assert now["parent_id"] == moved["parent_id"]  # the winner's edge stuck
+
+
+def test_move_rejects_a_page_trashed_while_it_waited_for_the_lock(
+    auth_client: httpx.Client, make_client: Callable[..., httpx.Client], db: Database
+) -> None:
+    """A trash that commits while a move waits for its locks is seen.
+
+    The move's access check reads the page before it blocks on the row
+    locks: a delete committed in that window is only visible when the lock
+    query loads fresh rows. A held row lock parks the move after its read;
+    the page is then trashed through the API and the lock released - the
+    move must come back 400 page_in_trash, not succeed on the stale row.
+    """
+    workspace = create_workspace(auth_client)
+    x1 = create_page(auth_client, workspace["id"], title="X1")
+    x2 = create_page(auth_client, workspace["id"], parent_id=x1["id"], title="X2")
+    target = create_page(
+        auth_client, workspace["id"], parent_id=x2["id"], title="Target"
+    )
+    held = [x1["id"], x2["id"], target["id"]]
+    # The mover must sort after every locked row, so the move blocks before
+    # it ever locks (and shields) the moved page.
+    mover = create_page(auth_client, workspace["id"], title="Mover")
+    attempts = 1
+    while uuid.UUID(mover["id"]) < max(uuid.UUID(page_id) for page_id in held):
+        mover = create_page(auth_client, workspace["id"], title="Mover")
+        attempts += 1
+        assert attempts <= 80, "no page id sorted after the locked rows"
+
+    box: dict[str, Any] = {}
+
+    def _move(client: httpx.Client) -> None:
+        box["response"] = client.post(
+            f"/pages/{mover['id']}/move", json={"parent_id": target["id"]}
+        )
+
+    token = auth_client.headers["Authorization"].removeprefix("Bearer ")
+    with held_db_lock(
+        db, "SELECT id FROM pages WHERE id = ANY(%s) FOR UPDATE", ([*held],)
+    ):
+        thread = threading.Thread(target=_move, args=(make_client(token),))
+        thread.start()
+        wait_for_blocked_queries(db, count=1, needle="FOR UPDATE")
+        assert auth_client.delete(f"/pages/{mover['id']}").status_code == 204
+    thread.join(timeout=30)
+
+    assert_error(box["response"], 400, "page_in_trash")
+    now = auth_client.get(f"/pages/{mover['id']}").json()
+    assert now["deleted_at"] is not None
+    assert now["parent_id"] is None  # the move never landed
 
 
 def test_viewer_cannot_move_pages(
