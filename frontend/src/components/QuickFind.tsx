@@ -113,7 +113,7 @@ export function QuickFind() {
       <DialogContent
         showCloseButton={false}
         aria-describedby={undefined}
-        className="top-[16%] w-[min(620px,calc(100vw-32px))] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-[620px]"
+        className="top-[16%] w-[min(755px,calc(100vw-32px))] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-[755px]"
       >
         <DialogTitle className="sr-only">Quick find</DialogTitle>
         <DialogDescription className="sr-only">Search pages by title or text.</DialogDescription>
