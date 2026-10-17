@@ -123,6 +123,7 @@ function CollabEditor({ page, session, editable }: CollabEditorProps) {
       {editable && (
         <div
           aria-hidden="true"
+          data-testid="editor-end"
           className="h-[30vh] cursor-text"
           onClick={() => {
             const last = editor.document[editor.document.length - 1]

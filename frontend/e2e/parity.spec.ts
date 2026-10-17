@@ -208,6 +208,15 @@ async function expectPageIcon(page: Page, coverBox: { y: number; height: number 
   expect.soft(iconBox.y, 'icon overlaps the cover').toBeLessThan(coverBox.y + coverBox.height)
 }
 
+/** Text of the editor block that holds the caret. */
+async function activeBlockText(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const anchor = window.getSelection()?.anchorNode
+    const element = anchor instanceof Element ? anchor : anchor?.parentElement
+    return element?.closest('.bn-block-content')?.textContent ?? null
+  })
+}
+
 const shots = process.env.PARITY_SHOTS_DIR
 
 async function shoot(page: Page, surface: string, theme: Theme) {
@@ -453,12 +462,13 @@ for (const theme of ['light', 'dark'] as const) {
       await expectTransition(handleButton, 'block handle hover')
 
       // Slash menu.
-      await page.getByText('The last paragraph.').click()
-      await page.keyboard.press('Control+End')
+      // The empty zone below the editor puts the caret at the end of the last block.
+      await page.getByTestId('editor-end').click()
       await page.keyboard.press('Enter')
       await page.keyboard.type('/')
       const slash = page.locator('.bn-suggestion-menu')
       await settle(slash)
+      expect(await activeBlockText(page), 'the slash opens on its own empty block').toBe('/')
       await expectMenuChrome(slash, theme, 'slash menu')
       near((await box(slash)).width, METRICS.slashMenu.width, 'slash menu width', 4)
       const slashItem = slash.locator('.bn-suggestion-menu-item').first()
