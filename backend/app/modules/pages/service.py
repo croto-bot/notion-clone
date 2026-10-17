@@ -620,17 +620,22 @@ class PageService(BaseService[Page]):
         self._require_editor(member)
         if page.deleted_at is not None:
             raise PageInTrashError()
-        existing = await self.current_state(page_id)
-        merged = merge_updates(existing, state)
-        content_text = extract_text(merged)
-        await self.repo.set_document(
-            page_id,
-            ydoc_state=merged,
-            content_text=content_text,
-            last_edited_by_id=user_id,
-            last_edited_at=datetime.now(tz=UTC),
-        )
-        self.collab_server.apply_external_update(page_id, state)
+        # The same per-page lock as room creation and the flush: the merge
+        # reads, the write and the room update happen as one unit, so a
+        # concurrently connecting socket can never load the pre-PUT bytes.
+        async with self.collab_server.page_lock(page_id):
+            existing = await self.current_state(page_id)
+            merged = merge_updates(existing, state)
+            content_text = extract_text(merged)
+            await self.repo.set_document(
+                page_id,
+                ydoc_state=merged,
+                content_text=content_text,
+                last_edited_by_id=user_id,
+                last_edited_at=datetime.now(tz=UTC),
+            )
+            self.collab_server.note_write(page_id, user_id)
+            self.collab_server.apply_external_update(page_id, state)
         self._publish(
             page.workspace_id, "page.updated", actor_id=user_id, page_id=page_id
         )

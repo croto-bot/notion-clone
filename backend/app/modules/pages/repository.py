@@ -218,6 +218,12 @@ class PageRepository(SQLAlchemyRepository[Page]):
         await self._session.execute(statement)
         await self._session.commit()
 
+    async def stored_state(self, page_id: uuid.UUID) -> bytes | None:
+        """The page's stored Yjs update (room creation reads it under the page lock)."""
+        statement = select(Page.ydoc_state).where(Page.id == page_id)
+        result = await self._session.execute(statement)
+        return result.scalar_one_or_none()
+
     async def has_child(self, page_id: uuid.UUID) -> bool:
         """Whether any page sits directly under this one."""
         statement = select(Page.id).where(Page.parent_id == page_id).limit(1)

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import base64
+import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pycrdt import Doc, XmlElement, XmlFragment, XmlText
 from websockets.exceptions import ConnectionClosed
@@ -14,6 +15,7 @@ from tests.e2e.helpers import (
     create_page,
     create_workspace,
     doc_with_text,
+    drop_server_connections,
     make_member,
     ws_close_code,
     yjs_send_awareness,
@@ -28,7 +30,7 @@ if TYPE_CHECKING:
     import httpx
 
     from tests.e2e.helpers import RegisteredUser
-    from tests.e2e.stack import LiveServer
+    from tests.e2e.stack import Database, LiveServer
 
 # Longer than the collab server's 1 s debounce, so a flushed state is certain.
 FLUSH_WAIT_S = 2.0
@@ -231,3 +233,104 @@ def test_non_member_closes_4404(
 
 def _token_of(client: httpx.Client) -> str:
     return client.headers["Authorization"].removeprefix("Bearer ")
+
+
+# --- concurrent document writes (review finding 1) ------------------------------
+
+
+def test_put_document_during_socket_connect_is_not_lost(
+    server: LiveServer, auth_client: httpx.Client
+) -> None:
+    """A markdown import (PUT) that commits while a socket connects must win.
+
+    The room must not be built from the pre-PUT bytes: this session also
+    edits, so the next flush would write that stale room over the import
+    (the flush must keep both the import and the socket edit).
+    """
+    for _attempt in range(5):
+        workspace = create_workspace(auth_client)
+        page = create_page(auth_client, workspace["id"])
+        url = _collab_url(server, page["id"], _token_of(auth_client))
+        _doc, update = doc_with_text("imported-via-put")
+        state = base64.b64encode(update).decode()
+        put_box: dict[str, Any] = {}
+
+        def _put(
+            box: dict[str, Any] = put_box,
+            page_id: str = page["id"],
+            body: str = state,
+        ) -> None:
+            box["response"] = auth_client.put(
+                f"/pages/{page_id}/document", json={"state": body}
+            )
+
+        thread = threading.Thread(target=_put)
+        thread.start()
+        with connect(url, open_timeout=5) as conn:  # handshake overlaps the PUT
+            doc, _ = doc_with_text()
+            yjs_sync(conn, doc)
+            _edit(doc, "typed-in-the-socket")
+            yjs_send_update(conn, doc)
+            yjs_wait_for(conn, doc, "typed-in-the-socket")
+        thread.join(timeout=10)
+        assert put_box["response"].status_code == 200, put_box["response"].text
+        time.sleep(FLUSH_WAIT_S)  # the disconnect flush (and the debounce) run
+
+        stored = auth_client.get(f"/pages/{page['id']}/document").json()
+        stored_doc = Doc()
+        stored_doc.apply_update(base64.b64decode(stored["state"]))
+        if "imported-via-put" in _doc_text(stored_doc):
+            assert "typed-in-the-socket" in _doc_text(stored_doc)  # both changes
+            return
+        # The import lost this round: the race did not fire, try again. Only
+        # a lost import on every attempt fails the test.
+    raise AssertionError("the PUT document was lost to the socket flush")
+
+
+def test_failed_flush_keeps_the_edit_dirty_and_retries(
+    server: LiveServer, auth_client: httpx.Client, db: Database
+) -> None:
+    """A flush whose database write fails must be retried, not dropped.
+
+    The dirty flag may only be cleared after a successful write: an outage
+    during the debounce tick must not lose the edit forever. The tick phase is
+    pinned first (a warm-up edit provably flushed), so the next tick is ~1 s
+    away and fires inside the outage, not before it.
+    """
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+    url = _collab_url(server, page["id"], _token_of(auth_client))
+
+    with connect(url, open_timeout=5) as conn:
+        doc, _ = doc_with_text()
+        yjs_sync(conn, doc)
+        _edit(doc, "warm-up")
+        yjs_send_update(conn, doc)
+        yjs_wait_for(conn, doc, "warm-up")
+        _await_flushed(db, page["id"], "warm-up")  # a debounce tick just ran
+
+        _edit(doc, "edit-during-outage")
+        yjs_send_update(conn, doc)
+        yjs_wait_for(conn, doc, "edit-during-outage")
+        with drop_server_connections(db, auth_client):
+            time.sleep(FLUSH_WAIT_S + 0.5)  # the next tick fails here
+    time.sleep(FLUSH_WAIT_S)  # the retry (debounce or disconnect flush) runs
+
+    row = db.fetch_one("SELECT ydoc_state FROM pages WHERE id = %s", (page["id"],))
+    assert row[0] is not None, "the edit was never persisted (dirty lost)"
+    stored_doc = Doc()
+    stored_doc.apply_update(row[0])
+    assert "edit-during-outage" in _doc_text(stored_doc)
+
+
+def _await_flushed(db: Database, page_id: str, needle: str) -> None:
+    """Wait until the debounce loop has persisted ``needle`` (tick just ran)."""
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        row = db.fetch_one(
+            "SELECT content_text FROM pages WHERE id = %s", (page_id,)
+        )
+        if needle in (row[0] or ""):
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"{needle!r} was never flushed")

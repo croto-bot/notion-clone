@@ -69,7 +69,7 @@ async def collab_socket(
     await websocket.accept()
     # Logged at accept: the connection succeeded, however long it stays open.
     log_socket(PATH_TEMPLATE, path, 200)
-    room = await collab_server.get_room(page_id, page.ydoc_state)
+    room = await collab_server.get_room(page_id)
     base = StarletteChannel(websocket, str(page_id))
     channel: Channel  # noqa: F821  (TYPE_CHECKING import; runtime is a channel wrapper)
     if read_only:
