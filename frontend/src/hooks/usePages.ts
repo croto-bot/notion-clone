@@ -288,7 +288,16 @@ export function useSetFavorite() {
       restoreLists(queryClient, context?.snapshot)
       void queryClient.invalidateQueries({ queryKey: queryKeys.pages.detail(page.id) })
     },
-    onSettled: () => {
+    onSettled: async (_data, _error, { page, favorite }) => {
+      // The events socket's open-flush (or any page.* event) can start a
+      // detail refetch after onMutate's cancel that still reads the
+      // pre-commit row; landing after the optimistic patch it would flip the
+      // star back (the sidebar list and the top bar disagreed). Cancel it and
+      // write the settled truth; the next invalidation refetches normally.
+      await queryClient.cancelQueries({ queryKey: queryKeys.pages.detail(page.id) })
+      queryClient.setQueryData<PageResponse>(queryKeys.pages.detail(page.id), old =>
+        old ? { ...old, is_favorite: favorite } : old
+      )
       void queryClient.invalidateQueries({ queryKey: ['pages', 'favorites'] })
     },
   })
