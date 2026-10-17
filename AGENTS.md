@@ -76,7 +76,7 @@ make pre-commit-install       # ruff, frontend eslint + prettier, demo-script pr
 | `docker-compose.yml` | Services `db`, `backend`, `frontend` with their env and healthchecks |
 | `Makefile` | All dev commands. Run `make help` |
 | `backend/` | FastAPI API server |
-| `backend/app/` | App code: `main.py` (app factory + collab-server lifespan), `routers.py`, `core/`, `database/`, `repositories/`, `services/`, `dependencies/`, `integrations/`, `user/` (users + auth), `modules/` (features: `workspaces/`, `pages/`, `comments/`, `collab/`, `events/`) |
+| `backend/app/` | App code: `main.py` (app factory + collab-server lifespan), `routers.py`, `core/`, `database/`, `repositories/`, `services/`, `dependencies/`, `user/` (users + auth), `modules/` (features: `workspaces/`, `pages/`, `comments/`, `collab/`, `events/`) |
 | `backend/app/migrations/` | Alembic migrations (`env.py` + `versions/`) |
 | `backend/tests/e2e/` | Backend end-to-end suite (live server + real Postgres) |
 | `backend/.env.example` | Backend settings for runs **outside** Docker only |

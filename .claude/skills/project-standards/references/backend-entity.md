@@ -463,9 +463,9 @@ class NoteLockedError(HTTPExceptionMixin):
 
 Put it in the module (e.g. `app/modules/notes/exceptions.py`) and raise it in
 the service. Third-party I/O: catch the client's protocol errors and
-`raise MyDomainError() from err`. Never `from None`. The generic httpx wrapper
-for third-party APIs is `ExternalApiService` in
-`app/integrations/http_client.py` (no caller by default).
+`raise MyDomainError() from err`. Never `from None`. Example: the Google
+token exchange in `app/user/auth/service.py` raises
+`OAuthProviderError() from err`.
 
 ## 13. Tests (mandatory)
 
