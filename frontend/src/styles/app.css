@@ -50,6 +50,7 @@
     Lyon-Text, Georgia, YuMincho, 'Yu Mincho', 'Hiragino Mincho ProN', 'Noto Serif CJK KR',
     'Noto Serif CJK JP', 'Noto Serif CJK SC', ui-serif, serif;
   --font-mono: iawriter-mono, Nitti, Menlo, Courier, monospace;
+  --font-code: SFMono-Regular, Menlo, Consolas, 'PT Mono', 'Liberation Mono', Courier, monospace;
 }
 
 /* Notion light theme (default). */
