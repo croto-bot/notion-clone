@@ -302,9 +302,15 @@
   background: var(--nx-hover);
 }
 
-/* Live cursors: names in a small tab above the caret. */
-.nx-editor .bn-collaboration-cursor__label {
+/* Live cursors: names in a small tab above the caret. BlockNote opens the tab
+   only on [data-active], which it never sets with showCursorLabels 'always'. */
+.nx-editor .bn-editor .bn-collaboration-cursor__base .bn-collaboration-cursor__label {
   font-family: inherit;
+  top: -17px;
+  max-width: 20rem;
+  max-height: 1.1rem;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px 3px 3px 0;
 }
 
 /* Selection inside the editor */

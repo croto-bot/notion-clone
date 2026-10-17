@@ -20,6 +20,11 @@ import {
   PASSWORD,
 } from './fixtures'
 
+/** A cursor label shows its whole name: wider than the caret tab, and nothing clipped. */
+function nameFits(label: HTMLElement): boolean {
+  return label.clientWidth > 16 && label.scrollWidth <= label.clientWidth
+}
+
 test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
   test('never mounts an empty editable editor while the socket cannot connect', async ({
     authedPage: page,
@@ -255,14 +260,17 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
     await editor.click()
     await page.keyboard.type('Ada was here')
     await expect(otherEditor).toContainText('Ada was here', { timeout: 15_000 })
-    await expect(other.locator('.bn-collaboration-cursor__label', { hasText: 'Ada' })).toBeVisible()
+    const adaLabel = other.locator('.bn-collaboration-cursor__label', { hasText: 'Ada' })
+    await expect(adaLabel).toBeVisible()
+    // The whole name shows, not a collapsed colored tab that clips it.
+    await expect.poll(() => adaLabel.evaluate(nameFits)).toBe(true)
 
     await otherEditor.click()
     await other.keyboard.type(' Blair too')
     await expect(editor).toContainText('Blair too', { timeout: 15_000 })
-    await expect(
-      page.locator('.bn-collaboration-cursor__label', { hasText: 'Blair' })
-    ).toBeVisible()
+    const blairLabel = page.locator('.bn-collaboration-cursor__label', { hasText: 'Blair' })
+    await expect(blairLabel).toBeVisible()
+    await expect.poll(() => blairLabel.evaluate(nameFits)).toBe(true)
 
     // Both edits persist: a reload shows them straight from the stored document.
     await other.reload()
