@@ -24,6 +24,8 @@ from app.repositories.exceptions import DuplicateError, NotFoundError
 from app.services.base_crud_service import BaseService
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from app.modules.collab.server import CollabServer
     from app.modules.events.bus import WorkspaceEventBus
     from app.modules.pages.repository import (
@@ -38,7 +40,7 @@ if TYPE_CHECKING:
     from app.user.repository import UserRepository
 
 SNIPPET_RADIUS = 40
-# How often a create/move regenerates its position when a concurrent writer
+# How often a placement regenerates its position when a concurrent writer
 # took the same sibling slot (the unique sibling index rejects it).
 SLOT_ATTEMPTS = 5
 
@@ -283,6 +285,51 @@ class PageService(BaseService[Page]):
         last = siblings[-1] if siblings else None
         return generate_key_between(last.position if last else None, None)
 
+    async def _place(
+        self,
+        workspace_id: uuid.UUID,
+        parent_id: uuid.UUID | None,
+        after_id: uuid.UUID | None,
+        *,
+        after_id_sent: bool,
+        user_id: uuid.UUID,
+        exclude_id: uuid.UUID | None = None,
+        guard: Callable[[], Awaitable[None]] | None = None,
+        write: Callable[[str], Awaitable[Page | None]],
+    ) -> tuple[Page, WorkspaceMember]:
+        """The one path every live placement goes through (create, move,
+        duplicate, restore).
+
+        Allocate a free sibling key from the live siblings, then write the
+        row live (position, parent_id and, for a restore, deleted_at) in one
+        transaction. When a concurrent writer committed the same slot first,
+        the write returns None: the failed transaction rolled back and
+        expired the session's objects, so this loop re-reads the siblings,
+        regenerates the key, re-runs ``guard`` (a move must re-take its row
+        locks and re-check cycle and trash) and re-reads the membership for
+        the response. Corrupt sibling keys surface as 400 invalid_move
+        (``_position_after``), and a slot that never becomes free as 400
+        duplicate_item: no raw IntegrityError reaches the client.
+        """
+        for _attempt in range(SLOT_ATTEMPTS):
+            if guard is not None:
+                await guard()
+            siblings = await self.repo.siblings(workspace_id, parent_id)
+            if exclude_id is not None:
+                siblings = [sibling for sibling in siblings if sibling.id != exclude_id]
+            position = self._position_after(
+                siblings, after_id, after_id_sent=after_id_sent
+            )
+            page = await write(position)
+            if page is not None:
+                member = await self.member_repo.get_membership(workspace_id, user_id)
+                if member is None:  # the membership vanished mid-placement
+                    raise NotFoundError(detail=f"Workspace {workspace_id} not found")
+                return page, member
+        raise DuplicateError(
+            detail="Could not allocate a page position; retry the request"
+        )
+
     async def _visible_parent_or_404(
         self, workspace_id: uuid.UUID, parent_id: uuid.UUID | None
     ) -> Page | None:
@@ -340,44 +387,32 @@ class PageService(BaseService[Page]):
             values["database_schema"] = _default_database_schema()
             values["database_views"] = _default_database_views()
 
-        for _attempt in range(SLOT_ATTEMPTS):
-            created = await self._create_once(payload, values, user_id=user_id)
-            if created is not None:
-                page, member = created
-                break
-        else:
-            raise DuplicateError(
-                detail="Could not allocate a page position; retry the request"
+        async def _member_or_errors() -> None:
+            member = await self.member_repo.get_membership(
+                payload.workspace_id, user_id
             )
+            if member is None:
+                raise NotFoundError(
+                    detail=f"Workspace {payload.workspace_id} not found"
+                )
+            self._require_editor(member)
+
+        page, member = await self._place(
+            payload.workspace_id,
+            payload.parent_id,
+            payload.after_id,
+            after_id_sent="after_id" in payload.model_fields_set,
+            user_id=user_id,
+            guard=_member_or_errors,
+            write=lambda position: self.repo.write_slot(
+                values={**values, "position": position}
+            ),
+        )
         self._log_entity(page.id)
         self._publish(
             payload.workspace_id, "page.created", actor_id=user_id, page_id=page.id
         )
         return await self._detail(page, member)
-
-    async def _create_once(
-        self, payload: PageCreate, values: dict[str, Any], *, user_id: uuid.UUID
-    ) -> tuple[Page, WorkspaceMember] | None:
-        """One create attempt; None when the position slot was taken.
-
-        Like a move attempt, this re-reads the membership: the failed slot
-        insert rolled the transaction back, which expires the session's
-        objects (async ORM objects cannot refresh themselves lazily).
-        """
-        member = await self.member_repo.get_membership(payload.workspace_id, user_id)
-        if member is None:
-            raise NotFoundError(detail=f"Workspace {payload.workspace_id} not found")
-        self._require_editor(member)
-        siblings = await self.repo.siblings(payload.workspace_id, payload.parent_id)
-        position = self._position_after(
-            siblings,
-            payload.after_id,
-            after_id_sent="after_id" in payload.model_fields_set,
-        )
-        page = await self.repo.create_in_slot({**values, "position": position})
-        if page is None:
-            return None
-        return page, member
 
     async def get_page(self, page_id: uuid.UUID, *, user_id: uuid.UUID) -> PageDetail:
         page, member = await self._access(page_id, user_id)
@@ -419,81 +454,72 @@ class PageService(BaseService[Page]):
         after_id_sent: bool = True,
     ) -> PageDetail:
         """Move (and reorder) a page, retrying a taken sibling slot."""
-        for _attempt in range(SLOT_ATTEMPTS):
-            result = await self._move_once(
-                page_id,
-                parent_id,
-                after_id,
-                user_id=user_id,
-                after_id_sent=after_id_sent,
-            )
-            if result is not None:
-                return result
-        raise DuplicateError(
-            detail="Could not allocate a page position; retry the request"
-        )
-
-    async def _move_once(
-        self,
-        page_id: uuid.UUID,
-        parent_id: uuid.UUID | None,
-        after_id: uuid.UUID | None,
-        *,
-        user_id: uuid.UUID,
-        after_id_sent: bool,
-    ) -> PageDetail | None:
-        """One full move attempt; None when the target slot was taken.
-
-        An attempt restarts from the access checks on purpose: the failed
-        slot insert rolled the transaction back (releasing the row locks and
-        expiring its objects), and the cycle and trash checks must run again
-        under fresh locks anyway.
-        """
-        page, member = await self._access(page_id, user_id)
-        self._require_editor(member)
+        page, _member = await self._access(page_id, user_id)
+        self._require_editor(_member)
         if page.deleted_at is not None:
             raise PageInTrashError()
         if parent_id == page_id:
             raise InvalidMoveError()
+        guard: Callable[[], Awaitable[None]] | None = None
         if parent_id is not None:
-            parent = await self._move_parent_or_error(page, parent_id, user_id)
-            # Serialize against concurrent moves before the subtree check: two
-            # moves that each pass the check on stale rows can write a cycle
-            # (A under B while B under A). The lock also re-reads the moved
-            # page and the parent, so a trash that committed meanwhile is
-            # seen here.
+            await self._move_parent_or_error(page, parent_id, user_id)
             chain = await self.repo.ancestor_ids(parent_id)
-            await self.repo.lock_for_move([page_id, parent_id, *chain])
-            if page.deleted_at is not None:
-                raise PageInTrashError()
-            subtree = await self.repo.subtree_ids(page_id)
-            if parent_id in subtree:
-                raise InvalidMoveError()
-            if parent.deleted_at is not None:
-                raise InvalidMoveError(
-                    detail="A page cannot move into a page that is in the trash"
-                )
 
-        siblings = [
-            sibling
-            for sibling in await self.repo.siblings(page.workspace_id, parent_id)
-            if sibling.id != page_id
-        ]
-        position = self._position_after(siblings, after_id, after_id_sent=after_id_sent)
-        updated = await self.repo.move_in_slot(page_id, parent_id, position)
-        if updated is None:
-            return None
+            async def _guarded() -> None:
+                """Re-take the row locks and re-check trash and cycle, freshly.
+
+                The rollback of a taken slot released the locks, so every
+                retry (and the first attempt) runs under its own: whoever
+                locks second re-reads the committed edges before its subtree
+                check, so two overlapping moves cannot write a cycle.
+                """
+                locked = {
+                    row.id: row
+                    for row in await self.repo.lock_for_move(
+                        [page_id, parent_id, *chain]
+                    )
+                }
+                fresh_page = locked.get(page_id)
+                if fresh_page is None:
+                    raise NotFoundError(detail=f"Page {page_id} not found")
+                if fresh_page.deleted_at is not None:
+                    raise PageInTrashError()
+                fresh_parent = locked.get(parent_id)
+                if fresh_parent is None:
+                    raise NotFoundError(detail=f"Page {parent_id} not found")
+                if fresh_parent.deleted_at is not None:
+                    raise InvalidMoveError(
+                        detail="A page cannot move into a page that is in the trash"
+                    )
+                if parent_id in await self.repo.subtree_ids(page_id):
+                    raise InvalidMoveError()
+
+            guard = _guarded
+
+        moved, member = await self._place(
+            page.workspace_id,
+            parent_id,
+            after_id,
+            after_id_sent=after_id_sent,
+            user_id=user_id,
+            exclude_id=page_id,
+            guard=guard,
+            write=lambda position: self.repo.write_slot(
+                page_id=page_id,
+                values={"parent_id": parent_id, "position": position},
+            ),
+        )
         self._log_entity(page_id)
         self._publish(
-            page.workspace_id, "page.moved", actor_id=user_id, page_id=page_id
+            moved.workspace_id, "page.moved", actor_id=user_id, page_id=page_id
         )
-        return await self._detail(updated, member)
+        return await self._detail(moved, member)
 
     async def duplicate_page(
         self, page_id: uuid.UUID, *, user_id: uuid.UUID
     ) -> PageDetail:
-        page, member = await self._access(page_id, user_id)
-        self._require_editor(member)
+        page, _member = await self._access(page_id, user_id)
+        self._require_editor(_member)
         if page.deleted_at is not None:
             raise PageInTrashError()
 
@@ -504,9 +530,6 @@ class PageService(BaseService[Page]):
         nodes = {
             node_id: node for node_id, node in nodes.items() if node.deleted_at is None
         }
-
-        siblings = await self.repo.siblings(page.workspace_id, page.parent_id)
-        copy_position = self._position_after(siblings, page_id, after_id_sent=True)
 
         id_map = {old_id: uuid.uuid4() for old_id in nodes}
         rows: list[dict[str, Any]] = []
@@ -525,7 +548,7 @@ class PageService(BaseService[Page]):
                     "icon": node.icon,
                     "cover": node.cover,
                     "cover_position": node.cover_position,
-                    "position": copy_position if is_root_copy else node.position,
+                    "position": None if is_root_copy else node.position,
                     "full_width": node.full_width,
                     "small_text": node.small_text,
                     "locked": node.locked,
@@ -541,12 +564,28 @@ class PageService(BaseService[Page]):
                     "properties": dict(node.properties or {}),
                 }
             )
-        created = await self.repo.insert_tree(rows)
-        copy = next(node for node in created if node.id == id_map[page_id])
-        for node in created:
-            self._log_entity(node.id)
+        copy_root_id = id_map[page_id]
+
+        async def _write_tree(position: str) -> Page | None:
+            # The root row's slot is the one that can collide; every retry
+            # rewrites it in place before the whole subtree insert reruns.
+            next(row for row in rows if row["id"] == copy_root_id)["position"] = (
+                position
+            )
+            return await self.repo.write_slot(tree_rows=rows, tree_root_id=copy_root_id)
+
+        copy, member = await self._place(
+            page.workspace_id,
+            page.parent_id,
+            page_id,
+            after_id_sent=True,  # right after the source, among its siblings
+            user_id=user_id,
+            write=_write_tree,
+        )
+        for node_id in id_map.values():
+            self._log_entity(node_id)
         self._publish(
-            page.workspace_id, "page.created", actor_id=user_id, page_id=copy.id
+            copy.workspace_id, "page.created", actor_id=user_id, page_id=copy.id
         )
         return await self._detail(copy, member)
 
@@ -581,29 +620,43 @@ class PageService(BaseService[Page]):
     async def restore_page(
         self, page_id: uuid.UUID, *, user_id: uuid.UUID
     ) -> PageDetail:
-        page, member = await self._access(page_id, user_id)
-        self._require_editor(member)
+        page, _member = await self._access(page_id, user_id)
+        self._require_editor(_member)
         if page.deleted_at is None:
             raise NotInTrashError()
         subtree = await self.repo.subtree_ids(page_id)
-        await self.repo.restore_trashed(await self._own_trash_ids(page_id, subtree))
-
+        own_ids = await self._own_trash_ids(page_id, subtree)
+        # The restored page keeps its parent when that parent is live again,
+        # else it returns to the workspace root. Either way it is re-keyed
+        # among the current live siblings: while it sat in the trash its key
+        # was free, and a sibling may have taken it (the unique live-sibling
+        # index would reject the old key with a 500 and keep it trashed).
         parent = await self.repo.get(page.parent_id, raise_error=False)
-        if parent is None or parent.deleted_at is not None:
-            siblings = await self.repo.siblings(page.workspace_id, None)
-            position = generate_key_between(
-                siblings[-1].position if siblings else None, None
-            )
-            page = await self.repo.update(
-                page_id, {"parent_id": None, "position": position}
-            )
-        else:
-            page = await self.repo.get(page_id)
+        to_root = parent is None or parent.deleted_at is not None
+        target_parent = None if to_root else page.parent_id
+
+        restored, member = await self._place(
+            page.workspace_id,
+            target_parent,
+            None,
+            after_id_sent=False,  # the restored page goes last
+            user_id=user_id,
+            write=lambda position: self.repo.write_slot(
+                page_id=page_id,
+                values={
+                    "parent_id": target_parent,
+                    "position": position,
+                    "deleted_at": None,
+                    "deleted_root": False,
+                },
+                restore_ids=[node_id for node_id in own_ids if node_id != page_id],
+            ),
+        )
         self._log_entity(page_id)
         self._publish(
-            page.workspace_id, "page.restored", actor_id=user_id, page_id=page_id
+            restored.workspace_id, "page.restored", actor_id=user_id, page_id=page_id
         )
-        return await self._detail(page, member)
+        return await self._detail(restored, member)
 
     async def purge_page(self, page_id: uuid.UUID, *, user_id: uuid.UUID) -> None:
         page, member = await self._access(page_id, user_id)

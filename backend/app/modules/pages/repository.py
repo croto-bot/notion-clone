@@ -146,7 +146,7 @@ class PageRepository(SQLAlchemyRepository[Page]):
         result = await self._session.execute(statement, {"page": page_id})
         return [row for (row,) in result.all()]
 
-    async def lock_for_move(self, page_ids: list[uuid.UUID]) -> None:
+    async def lock_for_move(self, page_ids: list[uuid.UUID]) -> list[Page]:
         """Row-lock the pages a move touches, in a stable order (no commit).
 
         Locking the moved page, the new parent and the parent's ancestor chain
@@ -157,12 +157,13 @@ class PageRepository(SQLAlchemyRepository[Page]):
         its rollback on error) releases the locks.
         """
         statement = (
-            select(Page.id)
+            select(Page)
             .where(Page.id.in_(page_ids))
             .order_by(Page.id)
             .with_for_update()
         )
-        await self._session.execute(statement)
+        result = await self._session.execute(statement)
+        return list(result.scalars().all())
 
     async def mark_trashed(
         self, page_ids: list[uuid.UUID], root_id: uuid.UUID, now: datetime
@@ -175,15 +176,6 @@ class PageRepository(SQLAlchemyRepository[Page]):
                 deleted_at=now,
                 deleted_root=(Page.id == root_id) | Page.deleted_root.is_(True),
             )
-        )
-        await self._session.execute(statement)
-        await self._session.commit()
-
-    async def restore_trashed(self, page_ids: list[uuid.UUID]) -> None:
-        statement = (
-            update(Page)
-            .where(Page.id.in_(page_ids), Page.deleted_at.is_not(None))
-            .values(deleted_at=None, deleted_root=False)
         )
         await self._session.execute(statement)
         await self._session.commit()
@@ -261,6 +253,7 @@ class PageRepository(SQLAlchemyRepository[Page]):
         result = await self._session.execute(statement)
         return list(result.scalars().all())
 
+    @SQLAlchemyRepository.translate_commit_errors
     async def insert_tree(self, rows: list[dict[str, Any]]) -> list[Page]:
         """Insert many pages in one transaction (duplicate subtree)."""
         statement = pg_insert(Page).values(rows).returning(Page)
@@ -325,30 +318,57 @@ class PageRepository(SQLAlchemyRepository[Page]):
         result = await self._session.execute(statement)
         return list(result.scalars().all())
 
-    async def create_in_slot(self, values: dict[str, Any]) -> Page | None:
-        """Insert a page; None when its (parent, position) slot was taken.
+    async def write_slot(
+        self,
+        *,
+        page_id: uuid.UUID | None = None,
+        values: dict[str, Any] | None = None,
+        tree_rows: list[dict[str, Any]] | None = None,
+        tree_root_id: uuid.UUID | None = None,
+        restore_ids: list[uuid.UUID] | None = None,
+    ) -> Page | None:
+        """Write a page's live placement at an allocated sibling slot.
 
-        Concurrent creators can compute the same position from the siblings
-        they saw; the unique sibling index rejects the second insert and the
-        caller regenerates a key and retries. Any other error propagates.
+        One transaction per call, exactly one of the shapes every placement
+        goes through:
+
+        - ``values``: insert a new page (create);
+        - ``page_id`` (+ ``values``): update an existing page's placement
+          columns, position and parent_id and, for a restore, deleted_at
+          (move, restore); ``restore_ids`` clears trash on the restored
+          subtree's rows in the same transaction;
+        - ``tree_rows`` (+ ``tree_root_id``): insert a copied subtree and
+          return its root row (duplicate).
+
+        Returns the written page, or None when a concurrent writer committed
+        the same sibling slot first: the whole transaction is rolled back and
+        the caller regenerates a key from the now-committed siblings. Any
+        other error leaves translated, so no raw IntegrityError escapes.
         """
         try:
+            if tree_rows is not None:
+                created = await self.insert_tree(tree_rows)
+                return next(row for row in created if row.id == tree_root_id)
+            if restore_ids is not None:
+                await self._session.execute(
+                    update(Page)
+                    .where(Page.id.in_(restore_ids), Page.deleted_at.is_not(None))
+                    .values(deleted_at=None, deleted_root=False)
+                )
+            if page_id is not None:
+                return await self.update(page_id, values)
             return await self.create(values)
         except DuplicateError:
             await self._session.rollback()
             return None
-
-    async def move_in_slot(
-        self, page_id: uuid.UUID, parent_id: uuid.UUID | None, position: str
-    ) -> Page | None:
-        """Re-parent a page; None when the target slot was taken (see above)."""
-        try:
-            return await self.update(
-                page_id, {"parent_id": parent_id, "position": position}
-            )
-        except DuplicateError:
-            await self._session.rollback()
-            return None
+        except Exception as exc:
+            parsed = self._parse_integrity_error(exc)
+            if isinstance(parsed, DuplicateError):
+                await self._session.rollback()
+                return None
+            if parsed is not exc:
+                raise parsed from exc
+            raise
 
 
 class PageFavoriteRepository(SQLAlchemyRepository[PageFavorite]):

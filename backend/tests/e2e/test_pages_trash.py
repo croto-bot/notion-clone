@@ -238,6 +238,39 @@ def test_purge_keeps_a_separately_trashed_child(
     assert db.fetch_one("SELECT count(*) FROM pages")[0] == 2
 
 
+def test_restore_re_keys_when_a_live_sibling_took_the_position(
+    auth_client: httpx.Client,
+) -> None:
+    """A restore must never collide with a sibling that reused its key.
+
+    While the page sat in the trash its position key was free: a new sibling
+    (or a duplicate) could take it. Restoring the old row as-is would hit
+    the unique live-sibling index and 500 with the page stuck in the trash;
+    the restore must allocate a fresh key among the current live siblings.
+    """
+    workspace = create_workspace(auth_client)
+    parent = create_page(auth_client, workspace["id"], title="Parent")
+    c1 = create_page(
+        auth_client, workspace["id"], parent_id=parent["id"], title="C1"
+    )
+    assert auth_client.delete(f"pages/{c1['id']}").status_code == 204
+    # C1's key is free while it is trashed: C2 takes it.
+    c2 = create_page(
+        auth_client, workspace["id"], parent_id=parent["id"], title="C2"
+    )
+    assert c2["position"] == c1["position"]
+
+    response = auth_client.post(f"pages/{c1['id']}/restore")
+
+    assert response.status_code == 200, response.text
+    restored = response.json()
+    assert restored["deleted_at"] is None
+    assert restored["parent_id"] == parent["id"]
+    assert restored["position"] != c2["position"]
+    tree = auth_client.get(f"/workspaces/{workspace['id']}/page-tree").json()
+    assert [page["title"] for page in tree] == ["Parent", "C2", "C1"]
+
+
 def test_viewer_cannot_purge_pages(
     auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
 ) -> None:

@@ -8,6 +8,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import psycopg
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
@@ -247,6 +249,55 @@ def _wait_until_server_connections_are_idle(db: Database) -> None:
     ):
         assert time.monotonic() < deadline, "the server's connections stay busy"
         time.sleep(0.01)
+
+
+# --- Locks and latches the public API cannot create ---------------------------------
+#
+# Some race windows (a write that must commit while a request is mid-flight)
+# need the test to hold a database lock and release it at a chosen moment.
+# The locks run on their own connection in their own transaction, so they
+# stay held for the whole ``with`` block and vanish on exit.
+
+
+@contextmanager
+def held_db_lock(
+    db: Database, statement: str, params: tuple[Any, ...] = ()
+) -> Iterator[None]:
+    """Run one locking statement and hold its transaction for the block.
+
+    e.g. ``with held_db_lock(db, "LOCK TABLE pages IN EXCLUSIVE MODE"):``
+    parks every write to ``pages`` behind the lock while reads keep going.
+    """
+    with psycopg.connect(db.url) as conn:
+        with conn.transaction():
+            conn.execute(statement, params)
+            yield
+
+
+def wait_for_blocked_queries(
+    db: Database, *, count: int, needle: str, timeout: float = 10.0
+) -> None:
+    """Wait until ``count`` server backends are lock-blocked on ``needle``.
+
+    ``needle`` is matched inside the query text the blocked backend last ran
+    ("INSERT INTO pages", "FOR UPDATE", "UPDATE pages"), so a test can prove
+    a request is parked inside a chosen window before it releases the lock.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        rows = db.fetch_all(
+            "SELECT pid FROM pg_stat_activity "
+            "WHERE datname = current_database() AND pid <> pg_backend_pid() "
+            "AND backend_type = 'client backend' "
+            "AND wait_event_type = 'Lock' AND query LIKE '%%' || %s || '%%'",
+            (needle,),
+        )
+        if len(rows) >= count:
+            return
+        time.sleep(0.05)
+    raise AssertionError(
+        f"{count} blocked queries matching {needle!r} never appeared"
+    )
 
 
 # --- WebSocket helpers (the collab and events sockets) ------------------------

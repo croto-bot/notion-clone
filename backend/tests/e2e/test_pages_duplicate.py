@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import threading
 from typing import TYPE_CHECKING
 
 from pycrdt import Doc, XmlFragment
@@ -12,7 +13,9 @@ from tests.e2e.helpers import (
     create_page,
     create_workspace,
     doc_with_text,
+    held_db_lock,
     make_member,
+    wait_for_blocked_queries,
 )
 
 if TYPE_CHECKING:
@@ -67,6 +70,48 @@ def test_duplicate_copies_children_and_settings(auth_client: httpx.Client) -> No
     tree = auth_client.get(f"/workspaces/{workspace['id']}/page-tree").json()
     kid_copy = [p for p in tree if p["title"] == "Kid"]
     assert len(kid_copy) == 2  # the original child and the copy's child
+
+
+def test_concurrent_duplicates_of_one_page_all_land(
+    auth_client: httpx.Client, make_client: Callable[..., httpx.Client], db: Database
+) -> None:
+    """Two duplicates that compute the same copy position must both land.
+
+    Both requests read the same live siblings before either insert commits,
+    so both allocate the same key for their copy: the unique live-sibling
+    index rejects the second insert. A held table lock parks both inserts
+    in that window deterministically; the loser must regenerate a key and
+    retry (201), never leak the index violation as a 500. Each thread uses
+    its own client: one connection pool shared across threads is not safe.
+    """
+    workspace = create_workspace(auth_client)
+    source = create_page(auth_client, workspace["id"], title="Original")
+    token = auth_client.headers["Authorization"].removeprefix("Bearer ")
+    responses: list[httpx.Response] = []
+
+    def _duplicate(client: httpx.Client) -> None:
+        responses.append(client.post(f"/pages/{source['id']}/duplicate"))
+
+    with held_db_lock(db, "LOCK TABLE pages IN EXCLUSIVE MODE"):
+        clients = [make_client(token) for _ in range(2)]
+        threads = [
+            threading.Thread(target=_duplicate, args=(client,)) for client in clients
+        ]
+        for thread in threads:
+            thread.start()
+        # Both computed their copy position from the pre-insert siblings.
+        wait_for_blocked_queries(db, count=2, needle="INSERT INTO pages")
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert [response.status_code for response in responses] == [201, 201], [
+        response.text for response in responses
+    ]
+    rows = db.fetch_all(
+        "SELECT position FROM pages WHERE workspace_id = %s", (workspace["id"],)
+    )
+    assert len(rows) == 3  # the source and both copies
+    assert len({row[0] for row in rows}) == 3, rows
 
 
 def test_duplicate_copies_the_yjs_document(auth_client: httpx.Client) -> None:
