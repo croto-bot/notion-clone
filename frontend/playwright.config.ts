@@ -39,7 +39,8 @@ export default defineConfig({
   globalSetup: COVERAGE_ENABLED ? './e2e/support/coverage.ts' : undefined,
   // A flaky e2e test is a bug to fix, not to retry.
   retries: 0,
-  workers: isCI ? 2 : undefined,
+  // Coverage makes the browser slower: fewer workers keep the timeouts honest.
+  workers: isCI || COVERAGE_ENABLED ? 2 : undefined,
   reporter: isCI ? [['list'], ['html', { open: 'never' }]] : [['list']],
   // The dev server compiles each module on its first request: the first page
   // load of a run can take a few seconds to hydrate on a slow CI machine.
