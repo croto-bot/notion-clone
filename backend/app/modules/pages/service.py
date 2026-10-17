@@ -630,7 +630,8 @@ class PageService(BaseService[Page]):
     # --- favorites ---------------------------------------------------------------------
 
     async def add_favorite(self, page_id: uuid.UUID, *, user_id: uuid.UUID) -> None:
-        page, _ = await self._access(page_id, user_id)
+        page, member = await self._access(page_id, user_id)
+        self._require_editor(member)
         if page.deleted_at is not None:
             raise PageInTrashError()
         if await self.favorite_repo.get_favorite(user_id, page_id) is not None:
@@ -645,7 +646,8 @@ class PageService(BaseService[Page]):
         )
 
     async def remove_favorite(self, page_id: uuid.UUID, *, user_id: uuid.UUID) -> None:
-        await self._access(page_id, user_id)
+        _page, member = await self._access(page_id, user_id)
+        self._require_editor(member)
         favorite = await self.favorite_repo.get_favorite(user_id, page_id)
         if favorite is not None:
             await self.favorite_repo.delete(favorite.id)
