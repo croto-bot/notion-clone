@@ -268,7 +268,10 @@ def held_db_lock(
     e.g. ``with held_db_lock(db, "LOCK TABLE pages IN EXCLUSIVE MODE"):``
     parks every write to ``pages`` behind the lock while reads keep going.
     """
-    with psycopg.connect(db.url) as conn:
+    with psycopg.connect(db.url, autocommit=True) as conn:
+        # Session-level, so the locking statement below cannot wait forever.
+        conn.execute("SET lock_timeout = '10s'")
+        conn.autocommit = False
         with conn.transaction():
             conn.execute(statement, params)
             yield

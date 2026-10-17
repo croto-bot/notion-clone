@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import TYPE_CHECKING, Any
 
 from tests.e2e.helpers import (
     assert_error,
     create_page,
     create_workspace,
+    held_db_lock,
     make_member,
 )
 
@@ -112,6 +114,82 @@ def test_tree_excludes_trashed_and_database_rows(auth_client: httpx.Client) -> N
     assert "Gone" not in titles
     assert "Row" not in titles
     assert set(titles) == {"Keep", "DB"}
+
+
+def test_create_racing_a_trash_of_its_parent(
+    auth_client: httpx.Client, make_client: Callable[..., httpx.Client], db: Database
+) -> None:
+    """A create and a trash of its parent must not leave a live child under trash.
+
+    A held table lock parks both after they have read the parent and before
+    either write commits. Without a workspace lock the child inserts live
+    under a parent the trash has already marked. The child must not end
+    live under a trashed parent. Neither request is a 500.
+    """
+    workspace = create_workspace(auth_client)
+    parent = create_page(auth_client, workspace["id"], title="Parent")
+    token = auth_client.headers["Authorization"].removeprefix("Bearer ")
+    box: dict[str, httpx.Response] = {}
+    barrier = threading.Barrier(2)
+
+    def _create(client: httpx.Client) -> None:
+        barrier.wait(timeout=10)
+        box["create"] = client.post(
+            "/pages",
+            json={
+                "workspace_id": workspace["id"],
+                "parent_id": parent["id"],
+                "title": "Child",
+            },
+        )
+
+    def _trash(client: httpx.Client) -> None:
+        barrier.wait(timeout=10)
+        box["trash"] = client.delete(f"/pages/{parent['id']}")
+
+    with held_db_lock(db, "LOCK TABLE pages IN EXCLUSIVE MODE"):
+        threads = [
+            threading.Thread(target=_create, args=(make_client(token),)),
+            threading.Thread(target=_trash, args=(make_client(token),)),
+        ]
+        for thread in threads:
+            thread.start()
+        queries: list[str] = []
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            rows = db.fetch_all(
+                "SELECT query FROM pg_stat_activity "
+                "WHERE datname = current_database() AND pid <> pg_backend_pid() "
+                "AND backend_type = 'client backend' "
+                "AND wait_event_type = 'Lock'"
+            )
+            queries = [row[0] or "" for row in rows]
+            inserting = any("INSERT INTO pages" in query for query in queries)
+            updating = any(
+                "UPDATE pages" in query and "FOR UPDATE" not in query
+                for query in queries
+            )
+            advisory = any("pg_advisory_xact_lock" in query for query in queries)
+            if (inserting and updating) or (advisory and (inserting or updating)):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError(f"create and trash never both parked: {queries!r}")
+    for thread in threads:
+        thread.join(timeout=30)
+
+    created = box["create"]
+    trashed = box["trash"]
+    assert created.status_code in (201, 404), created.text
+    assert trashed.status_code == 204, trashed.text
+    if created.status_code == 404:
+        assert created.json()["error_code"] == "not_found"
+    tree = auth_client.get(f"/workspaces/{workspace['id']}/page-tree").json()
+    for page in tree:
+        if page["parent_id"] is None:
+            continue
+        parent_now = auth_client.get(f"/pages/{page['parent_id']}").json()
+        assert parent_now["deleted_at"] is None, page
 
 
 def test_viewer_cannot_create_pages(

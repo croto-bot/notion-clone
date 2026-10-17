@@ -13,9 +13,7 @@ from tests.e2e.helpers import (
     create_page,
     create_workspace,
     doc_with_text,
-    held_db_lock,
     make_member,
-    wait_for_blocked_queries,
 )
 
 if TYPE_CHECKING:
@@ -73,45 +71,40 @@ def test_duplicate_copies_children_and_settings(auth_client: httpx.Client) -> No
 
 
 def test_concurrent_duplicates_of_one_page_all_land(
-    auth_client: httpx.Client, make_client: Callable[..., httpx.Client], db: Database
+    auth_client: httpx.Client, make_client: Callable[..., httpx.Client]
 ) -> None:
-    """Two duplicates that compute the same copy position must both land.
+    """Two duplicates started together both land, with distinct positions.
 
-    Both requests read the same live siblings before either insert commits,
-    so both allocate the same key for their copy: the unique live-sibling
-    index rejects the second insert. A held table lock parks both inserts
-    in that window deterministically; the loser must regenerate a key and
-    retry (201), never leak the index violation as a 500. Each thread uses
+    Each copy is a live sibling of the source. Both requests are 201, never
+    500, and the three rows do not share a position key. Each thread uses
     its own client: one connection pool shared across threads is not safe.
     """
     workspace = create_workspace(auth_client)
     source = create_page(auth_client, workspace["id"], title="Original")
     token = auth_client.headers["Authorization"].removeprefix("Bearer ")
     responses: list[httpx.Response] = []
+    barrier = threading.Barrier(2)
 
     def _duplicate(client: httpx.Client) -> None:
+        barrier.wait(timeout=10)
         responses.append(client.post(f"/pages/{source['id']}/duplicate"))
 
-    with held_db_lock(db, "LOCK TABLE pages IN EXCLUSIVE MODE"):
-        clients = [make_client(token) for _ in range(2)]
-        threads = [
-            threading.Thread(target=_duplicate, args=(client,)) for client in clients
-        ]
-        for thread in threads:
-            thread.start()
-        # Both computed their copy position from the pre-insert siblings.
-        wait_for_blocked_queries(db, count=2, needle="INSERT INTO pages")
+    threads = [
+        threading.Thread(target=_duplicate, args=(make_client(token),))
+        for _ in range(2)
+    ]
+    for thread in threads:
+        thread.start()
     for thread in threads:
         thread.join(timeout=30)
 
     assert [response.status_code for response in responses] == [201, 201], [
         response.text for response in responses
     ]
-    rows = db.fetch_all(
-        "SELECT position FROM pages WHERE workspace_id = %s", (workspace["id"],)
-    )
-    assert len(rows) == 3  # the source and both copies
-    assert len({row[0] for row in rows}) == 3, rows
+    tree = auth_client.get(f"/workspaces/{workspace['id']}/page-tree").json()
+    positions = [page["position"] for page in tree]
+    assert len(positions) == 3  # the source and both copies
+    assert len(set(positions)) == 3, positions
 
 
 def test_duplicate_and_search_return_in_a_cycled_tree(

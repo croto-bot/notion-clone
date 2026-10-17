@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-import uuid
+import time
 from typing import TYPE_CHECKING, Any
 
 from tests.e2e.helpers import (
@@ -208,9 +208,9 @@ def test_overlapping_cycle_moves_one_succeeds_one_is_invalid(
 ) -> None:
     """Two moves that would form a cycle: one wins, one gets invalid_move.
 
-    The moves lock the same two rows (each page is the other's target
-    parent), so they serialize: whoever locks second re-reads the committed
-    edges and its subtree check fails. Never a 500, never a written cycle.
+    The moves serialize on the workspace tree lock, so whoever runs second
+    re-reads the committed edge and its subtree check fails. Never a 500,
+    never a written cycle.
     """
     workspace = create_workspace(auth_client)
     a = create_page(auth_client, workspace["id"], title="A")
@@ -248,54 +248,208 @@ def test_overlapping_cycle_moves_one_succeeds_one_is_invalid(
     assert now["parent_id"] == moved["parent_id"]  # the winner's edge stuck
 
 
-def test_move_rejects_a_page_trashed_while_it_waited_for_the_lock(
+def _assert_acyclic(pages: list[dict[str, Any]]) -> None:
+    """Follow parent_id from every page. A repeat is a cycle."""
+    parents = {page["id"]: page["parent_id"] for page in pages}
+    for start in parents:
+        seen: set[str] = set()
+        current: str | None = start
+        while current is not None:
+            assert current not in seen, parents
+            seen.add(current)
+            current = parents.get(current)
+
+
+def _blocked_queries(db: Database) -> list[str]:
+    rows = db.fetch_all(
+        "SELECT query FROM pg_stat_activity "
+        "WHERE datname = current_database() AND pid <> pg_backend_pid() "
+        "AND backend_type = 'client backend' "
+        "AND wait_event_type = 'Lock'"
+    )
+    return [row[0] or "" for row in rows]
+
+
+def _wait_until(db: Database, ready, *, timeout: float = 10.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if ready(_blocked_queries(db)):
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"parked queries never matched: {_blocked_queries(db)!r}")
+
+
+def _moves_parked(queries: list[str]) -> bool:
+    """Four row-lock waits, or the workspace lock plus the one writer it let through."""
+    row_locks = sum("FOR UPDATE" in query for query in queries)
+    advisory = any("pg_advisory_xact_lock" in query for query in queries)
+    writing = any(
+        "UPDATE pages" in query and "FOR UPDATE" not in query for query in queries
+    )
+    return row_locks >= 4 or (advisory and writing)
+
+
+def _one_move_ring(
     auth_client: httpx.Client, make_client: Callable[..., httpx.Client], db: Database
 ) -> None:
-    """A trash that commits while a move waits for its locks is seen.
+    workspace = create_workspace(auth_client)
+    pages = [
+        create_page(auth_client, workspace["id"], title=title)
+        for title in ("A", "B", "C", "D")
+    ]
+    moves = {
+        pages[0]["id"]: pages[1]["id"],
+        pages[1]["id"]: pages[2]["id"],
+        pages[2]["id"]: pages[3]["id"],
+        pages[3]["id"]: pages[0]["id"],
+    }
+    token = auth_client.headers["Authorization"].removeprefix("Bearer ")
+    responses: list[httpx.Response] = []
+    barrier = threading.Barrier(4)
 
-    The move's access check reads the page before it blocks on the row
-    locks: a delete committed in that window is only visible when the lock
-    query loads fresh rows. A held row lock parks the move after its read;
-    the page is then trashed through the API and the lock released - the
-    move must come back 400 page_in_trash, not succeed on the stale row.
+    def _move(client: httpx.Client, page_id: str, parent_id: str) -> None:
+        barrier.wait(timeout=10)
+        responses.append(
+            client.post(f"/pages/{page_id}/move", json={"parent_id": parent_id})
+        )
+
+    with held_db_lock(db, "LOCK TABLE pages IN EXCLUSIVE MODE"):
+        threads = [
+            threading.Thread(
+                target=_move, args=(make_client(token), page_id, parent_id)
+            )
+            for page_id, parent_id in moves.items()
+        ]
+        for thread in threads:
+            thread.start()
+        _wait_until(db, _moves_parked)
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert len(responses) == 4, responses
+    assert all(response.status_code in (200, 400) for response in responses), [
+        response.text for response in responses
+    ]
+    for response in responses:
+        if response.status_code == 400:
+            assert response.json()["error_code"] == "invalid_move", response.text
+    tree = auth_client.get(f"/workspaces/{workspace['id']}/page-tree").json()
+    assert {page["title"] for page in tree} == {"A", "B", "C", "D"}
+    _assert_acyclic(tree)
+
+
+def test_four_overlapping_moves_cannot_write_a_cycle(
+    auth_client: httpx.Client, make_client: Callable[..., httpx.Client], db: Database
+) -> None:
+    """Four moves that close a ring must not write a cycle.
+
+    A under B locks {A, B}. C under D locks {C, D}. Those sets share no row,
+    and the ancestor chain each move locks is the empty snapshot taken before
+    it waits. The same is true of B under C and D under A. Row locks let both
+    pairs pass the subtree check and commit A -> B -> C -> D -> A. A held
+    table lock parks every move after that snapshot and releases them
+    together. The tree must end acyclic. Each request is 200 or 400
+    invalid_move, never 500.
+    """
+    # A few releases: one lucky serialization must not hide the race.
+    for _round in range(4):
+        _one_move_ring(auth_client, make_client, db)
+
+
+def test_root_move_racing_a_trash_of_the_page(
+    auth_client: httpx.Client, make_client: Callable[..., httpx.Client]
+) -> None:
+    """A move to the root and a trash of that page must serialize.
+
+    A root move used to take no lock and no fresh deleted_at check, so it
+    could return 200 for a page the trash had already committed. Each
+    request is 200 or 400 page_in_trash (the trash is 204), never 500. A
+    200 move reports the page still live. The page ends trashed, at the
+    root only if the move won.
     """
     workspace = create_workspace(auth_client)
-    x1 = create_page(auth_client, workspace["id"], title="X1")
-    x2 = create_page(auth_client, workspace["id"], parent_id=x1["id"], title="X2")
-    target = create_page(
-        auth_client, workspace["id"], parent_id=x2["id"], title="Target"
+    parent = create_page(auth_client, workspace["id"], title="Parent")
+    page = create_page(
+        auth_client, workspace["id"], parent_id=parent["id"], title="Mover"
     )
-    held = [x1["id"], x2["id"], target["id"]]
-    # The mover must sort after every locked row, so the move blocks before
-    # it ever locks (and shields) the moved page.
-    mover = create_page(auth_client, workspace["id"], title="Mover")
-    attempts = 1
-    while uuid.UUID(mover["id"]) < max(uuid.UUID(page_id) for page_id in held):
-        mover = create_page(auth_client, workspace["id"], title="Mover")
-        attempts += 1
-        assert attempts <= 80, "no page id sorted after the locked rows"
+    token = auth_client.headers["Authorization"].removeprefix("Bearer ")
+    box: dict[str, httpx.Response] = {}
+    barrier = threading.Barrier(2)
 
+    def _move(client: httpx.Client) -> None:
+        barrier.wait(timeout=10)
+        box["move"] = client.post(f"/pages/{page['id']}/move", json={"parent_id": None})
+
+    def _trash(client: httpx.Client) -> None:
+        barrier.wait(timeout=10)
+        box["trash"] = client.delete(f"/pages/{page['id']}")
+
+    threads = [
+        threading.Thread(target=_move, args=(make_client(token),)),
+        threading.Thread(target=_trash, args=(make_client(token),)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    moved = box["move"]
+    trashed = box["trash"]
+    assert trashed.status_code == 204, trashed.text
+    assert moved.status_code in (200, 400), moved.text
+    if moved.status_code == 400:
+        assert moved.json()["error_code"] == "page_in_trash"
+    else:
+        assert moved.json()["deleted_at"] is None, moved.text
+    now = auth_client.get(f"/pages/{page['id']}").json()
+    assert now["deleted_at"] is not None
+    if moved.status_code == 400:
+        assert now["parent_id"] == parent["id"]
+    else:
+        assert now["parent_id"] is None
+
+
+def test_root_move_sees_a_trash_that_commits_while_it_waits(
+    auth_client: httpx.Client, make_client: Callable[..., httpx.Client], db: Database
+) -> None:
+    """A root move parked on the workspace tree lock must re-read deleted_at.
+
+    The move blocks on the same advisory lock the tree writers take. While
+    it waits, the row is trashed directly (an API trash would wait on that
+    same lock). After the lock is released the move must answer 400
+    page_in_trash and leave the parent alone, not 200.
+    """
+    workspace = create_workspace(auth_client)
+    parent = create_page(auth_client, workspace["id"], title="Parent")
+    page = create_page(
+        auth_client, workspace["id"], parent_id=parent["id"], title="Mover"
+    )
+    token = auth_client.headers["Authorization"].removeprefix("Bearer ")
     box: dict[str, Any] = {}
 
     def _move(client: httpx.Client) -> None:
         box["response"] = client.post(
-            f"/pages/{mover['id']}/move", json={"parent_id": target["id"]}
+            f"/pages/{page['id']}/move", json={"parent_id": None}
         )
 
-    token = auth_client.headers["Authorization"].removeprefix("Bearer ")
     with held_db_lock(
-        db, "SELECT id FROM pages WHERE id = ANY(%s) FOR UPDATE", ([*held],)
+        db,
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        (workspace["id"],),
     ):
         thread = threading.Thread(target=_move, args=(make_client(token),))
         thread.start()
-        wait_for_blocked_queries(db, count=1, needle="FOR UPDATE")
-        assert auth_client.delete(f"/pages/{mover['id']}").status_code == 204
+        wait_for_blocked_queries(db, count=1, needle="pg_advisory_xact_lock")
+        assert db.execute(
+            "UPDATE pages SET deleted_at = now() WHERE id = %s",
+            (page["id"],),
+        )
     thread.join(timeout=30)
 
     assert_error(box["response"], 400, "page_in_trash")
-    now = auth_client.get(f"/pages/{mover['id']}").json()
+    now = auth_client.get(f"/pages/{page['id']}").json()
     assert now["deleted_at"] is not None
-    assert now["parent_id"] is None  # the move never landed
+    assert now["parent_id"] == parent["id"]
 
 
 def test_viewer_cannot_move_pages(

@@ -277,6 +277,29 @@ def test_purge_keeps_nested_trash_roots_hierarchy(
     assert great_now["parent_id"] == grandchild["id"]
 
 
+def test_restore_keeps_its_position_when_the_slot_is_free(
+    auth_client: httpx.Client,
+) -> None:
+    """Restore puts the page back at its old key when no live sibling took it.
+
+    Re-keying every restore shoves the page to the end of its siblings even
+    when its key is still free. The old key is tried first. A new key is
+    allocated only when that key is taken.
+    """
+    workspace = create_workspace(auth_client)
+    create_page(auth_client, workspace["id"], title="S1")
+    page = create_page(auth_client, workspace["id"], title="P")
+    create_page(auth_client, workspace["id"], title="S2")
+    assert auth_client.delete(f"/pages/{page['id']}").status_code == 204
+
+    response = auth_client.post(f"/pages/{page['id']}/restore")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["position"] == page["position"]
+    tree = auth_client.get(f"/workspaces/{workspace['id']}/page-tree").json()
+    assert [item["title"] for item in tree] == ["S1", "P", "S2"]
+
+
 def test_restore_re_keys_when_a_live_sibling_took_the_position(
     auth_client: httpx.Client,
 ) -> None:
