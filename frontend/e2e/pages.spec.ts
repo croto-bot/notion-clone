@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import type { Request } from '@playwright/test'
 import {
   test,
   expect,
@@ -425,6 +426,44 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     await expect(crumbs.getByRole('link', { name: 'Folder' })).toBeVisible()
     await expect(crumbs.getByRole('link', { name: 'Parent' })).toBeVisible()
     expect((await getPage(api, user, parent.id)).parent_id).not.toBeNull()
+  })
+
+  test('typing in the document does not refetch the open page', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    // Every collab save publishes page.updated with this tab's id. Without
+    // the typing counted as this tab's activity, each save (about once a
+    // second) refetched the page, recorded a visit and reloaded every list.
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Steady typing' })
+    await page.goto(`/p/${note.id}`)
+    const editor = page.getByTestId('editor')
+    await expect(editor).toBeVisible({ timeout: 15_000 })
+    await expect(sidebar(page).locator(`[data-page-id="${note.id}"]`)).toBeVisible()
+    await editor.click()
+    // Let the first load and the socket-open reload finish before counting.
+    await page.waitForTimeout(1500)
+
+    const reads: string[] = []
+    const onRequest = (request: Request) => {
+      if (request.method() !== 'GET') return
+      const path = new URL(request.url()).pathname
+      if (path === `/pages/${note.id}` || path.endsWith('/page-tree')) reads.push(path)
+    }
+    page.on('request', onRequest)
+    await page.keyboard.type('Steady words typed for a while. '.repeat(3), { delay: 50 })
+    // The last save lands about a second after the last keystroke.
+    await page.waitForTimeout(1500)
+    page.off('request', onRequest)
+
+    expect(reads, `reads while typing: ${JSON.stringify(reads)}`).toEqual([])
+    await expect
+      .poll(async () =>
+        (await searchPages(api, user, workspace.id, 'Steady words')).map(item => item.id)
+      )
+      .toContain(note.id)
   })
 
   test('typing then renaming within a second does not revert the title', async ({
