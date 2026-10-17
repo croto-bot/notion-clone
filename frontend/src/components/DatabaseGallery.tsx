@@ -15,7 +15,7 @@ export function DatabaseGallery() {
     <div>
       <ul
         data-testid="database-gallery"
-        className="grid min-h-24 grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3"
+        className="grid min-h-24 grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4"
       >
         {rows.map(row => {
           const label = row.title.trim() ? row.title : UNTITLED
