@@ -26,10 +26,11 @@ import { ThemeProvider, THEME_KEY } from '@/contexts/ThemeContext'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { initWebVitals } from '@/lib/web-vitals'
 import { useDevtoolsEnabled } from '@/hooks/useDevtoolsEnabled'
+import { PRODUCT_NAME } from '@/lib/brand'
 
 import appCss from '@/styles/app.css?url'
 
-const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem(${JSON.stringify(THEME_KEY)});var d=t==='dark'||((t===null||t==='system')&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(d){document.documentElement.classList.add('dark');document.documentElement.style.colorScheme='dark'}}catch(e){}})()`
+const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem(${JSON.stringify(THEME_KEY)});var d=t==='dark'||((t===null||t==='system')&&window.matchMedia('(prefers-color-scheme: dark)').matches);var r=document.documentElement;if(d)r.classList.add('dark');r.style.colorScheme=d?'dark':'light';r.style.backgroundColor=d?'#191919':'#ffffff';r.style.color=d?'rgba(255,255,255,0.81)':'rgb(55,53,47)';var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute('content',d?'#191919':'#ffffff')}catch(e){}})()`
 
 export const Route = createRootRoute({
   head: () => ({
@@ -42,7 +43,11 @@ export const Route = createRootRoute({
         content: 'width=device-width, initial-scale=1',
       },
       {
-        title: 'Notion',
+        title: PRODUCT_NAME,
+      },
+      {
+        name: 'description',
+        content: `${PRODUCT_NAME} is an open-source Notion alternative for docs, wikis and databases.`,
       },
       {
         name: 'theme-color',
@@ -56,7 +61,13 @@ export const Route = createRootRoute({
       },
       {
         rel: 'icon',
+        href: '/favicon.svg',
+        type: 'image/svg+xml',
+      },
+      {
+        rel: 'icon',
         href: '/favicon.ico',
+        sizes: '32x32',
       },
     ],
     // Sets the theme class before the first paint, so a dark-theme user sees no white flash.

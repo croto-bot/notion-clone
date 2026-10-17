@@ -11,7 +11,7 @@ They are mandatory (Router -> Service -> Repository, e2e tests only, exact pins)
 | # | Feature | Notes |
 |---|---|---|
 | F1 | Auth | Already in the template (register, login, logout, Google OAuth). Restyle the pages to look like Notion. |
-| F2 | Workspaces | A user has 1..n workspaces. After sign-in, when the user has none, the frontend creates `"<display name or email name>'s Notion"`. Workspace switcher in the sidebar. Rename, icon (emoji), delete (owner only). |
+| F2 | Workspaces | A user has 1..n workspaces. After sign-in, when the user has none, the frontend creates `"<display name or email name>'s Workspace"`. Workspace switcher in the sidebar. Rename, icon (emoji), delete (owner only). |
 | F3 | Members and roles | Roles: `owner`, `editor`, `viewer`. Owner adds members by the email of a registered user, changes roles, removes members. A member can leave. Viewers can read only. |
 | F4 | Pages tree | Nested pages. Create (root or child), rename, emoji icon, cover, reorder and move with drag and drop in the sidebar, "Move to" dialog, duplicate (with children and content), copy link. |
 | F5 | Block editor | BlockNote (ProseMirror) editor with Notion behaviour: `/` slash menu, markdown shortcuts, drag handles (`⋮⋮`), `+` button, formatting toolbar, text and background colors, links, headings 1-3, bullet / numbered / to-do / toggle lists, quote, callout-like blocks, code block, divider, image (by URL), table. Page links: a `Page` slash item creates a child page and inserts a link to it. |
@@ -27,7 +27,7 @@ They are mandatory (Router -> Service -> Repository, e2e tests only, exact pins)
 | F15 | Databases | A page can be a database (full-page). Rows are pages (`parent_id` = the database page). Property types: `title`, `text`, `number`, `select`, `multi_select`, `date`, `checkbox`, `url`, `person`, `created_time`, `last_edited_time`. Views: `table`, `board` (grouped by a select property, drag cards between columns), `list`, `gallery`. Per view: sort, filter, visible properties. Add / rename / delete / change type of properties. Open a row as a page (with its properties shown above the editor). Inline "+ New" row. |
 | F16 | Appearance | Light, dark and system theme (Settings and `Cmd/Ctrl+Shift+L`). Collapsible (`Cmd/Ctrl+\`) and resizable sidebar. |
 | F17 | Settings modal | My account (display name), Appearance, Workspace (name, icon, delete), Members (invite, role, remove, leave). |
-| F18 | Public landing | `/` is a short Notion-like landing page with "Get Notion free" / "Log in". A signed-in user goes to `/home`. |
+| F18 | Public landing | `/` is a short landing page for Noted, an open-source Notion alternative, with "Get Noted free" / "Log in". A signed-in user goes to `/home`. |
 
 Out of scope: billing, email delivery, AI, calendars, page history, file uploads (images are by URL).
 
@@ -167,7 +167,7 @@ frontend page, tests) is removed: this is a product, not a template.
 - Font: `ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif`. Text `rgb(55,53,47)` light / `rgba(255,255,255,0.81)` dark. Page bg `#fff` / `#191919`. Sidebar bg `#f7f7f5` / `#202020`. Hover bg `rgba(55,53,47,0.06)` / `rgba(255,255,255,0.055)`. Borders `rgba(55,53,47,0.09)`. Radius 4-6 px. Small text 14 px in the UI; menus with shadow `rgba(15,15,15,0.05) 0 0 0 1px, rgba(15,15,15,0.1) 0 3px 6px, rgba(15,15,15,0.2) 0 9px 24px`.
 - **Sidebar** (240 px, resizable 200-480, collapsible): workspace switcher (icon + name + chevron, menu with the workspaces, "New workspace", "Log out"); Search; Home; Settings; Favorites; "Private"/"Workspace" section title "Pages" with a `+`; page tree rows (28 px high, toggle arrow, icon or page glyph, title or "Untitled", hover `...` and `+`); "New page"; Trash at the bottom. Drag and drop to reorder and nest.
 - **Top bar** (45 px): breadcrumbs (icon + title, truncated), "Edited …", collaborator avatars, Share, comments, star, `...`.
-- **Page**: optional cover (full width, 30 vh, "Change cover" / "Reposition" / "Remove" on hover), icon (78 px emoji, overlaps the cover), hover row "Add icon · Add cover · Add comment", title (40 px, 700, placeholder "Untitled"), discussions, then the editor. Content width 708 px (full width: 96 px side padding). Enter in the title moves focus into the editor.
+- **Page**: optional cover (full width, 30 vh, "Change cover" / "Reposition" / "Remove" on hover), icon (78 px emoji, overlaps the cover), hover row "Add icon · Add cover · Add comment", title (40 px, 700, placeholder "Untitled"), discussions, then the editor. Content width 708 px (full width: 96 px side padding). Enter in the title moves focus into the editor. A database page uses that full-width column so the view tabs and the table share one left edge. The table scrolls horizontally. Header and body cells are 33 px tall, 14 px text, grid lines `rgba(55,53,47,0.09)` in light mode. Board columns are 260 px with colored group headers.
 - **Emoji picker**: search + grid + "Random" + "Remove" (use `frimousse`).
 - **Cover picker**: preset gradients and colors (no external images), plus "Link" (URL).
 - Every popover / menu / modal closes on Escape and outside click and has keyboard focus.

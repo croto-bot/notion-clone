@@ -4,6 +4,7 @@ import { Check, ChevronRight, FileText, Home, Search, Settings, Star } from 'luc
 import { NotionLogo } from '@/components/NotionLogo'
 import { buttonVariants } from '@/components/ui/button'
 import { useAuth } from '@/contexts/AuthContext'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/')({
@@ -24,9 +25,9 @@ function Landing() {
     <div className="bg-background text-foreground min-h-screen">
       <header className="bg-background/90 sticky top-0 z-30 backdrop-blur-md">
         <nav className="mx-auto flex h-16 max-w-[1120px] items-center justify-between px-6">
-          <Link to="/" className="flex items-center gap-2" aria-label="Notion home">
+          <Link to="/" className="flex items-center gap-2" aria-label={`${PRODUCT_NAME} home`}>
             <NotionLogo size={30} />
-            <span className="text-[20px] font-bold tracking-tight">Notion</span>
+            <span className="text-[20px] font-bold tracking-tight">{PRODUCT_NAME}</span>
           </Link>
           <div className="flex items-center gap-2">
             <Link
@@ -39,7 +40,7 @@ function Landing() {
               to="/register"
               className={cn(buttonVariants({ variant: 'default', size: 'default' }), 'text-[15px]')}
             >
-              Get Notion free
+              Get {PRODUCT_NAME} free
             </Link>
           </div>
         </nav>
@@ -51,8 +52,8 @@ function Landing() {
             Write. Plan. <span className="text-primary">Collaborate.</span>
           </h1>
           <p className="text-muted-foreground animate-in fade-in-0 slide-in-from-bottom-2 mx-auto mt-6 max-w-[560px] text-[18px] leading-snug delay-100 duration-500 sm:text-[20px]">
-            Notion is the connected workspace where better, faster work happens: docs, wikis and
-            databases, edited together in real time.
+            {PRODUCT_NAME} is an open-source Notion alternative: docs, wikis and databases, edited
+            together in real time.
           </p>
           <div className="animate-in fade-in-0 mt-9 flex flex-wrap items-center justify-center gap-3 delay-200 duration-500">
             <Link
@@ -62,7 +63,7 @@ function Landing() {
                 'h-11 px-5 text-[16px]'
               )}
             >
-              Get Notion free
+              Get {PRODUCT_NAME} free
             </Link>
             <Link
               to="/login"
@@ -99,7 +100,7 @@ function Landing() {
       </main>
 
       <footer className="text-muted-foreground mx-auto flex max-w-[1120px] items-center justify-between px-6 py-8 text-[13px]">
-        <span>© Notion clone. Open source.</span>
+        <span>© {PRODUCT_NAME}. An open-source Notion alternative.</span>
         <span className="flex gap-4">
           <Link to="/login" className="hover:text-foreground transition-colors duration-100">
             Log in
@@ -137,7 +138,7 @@ function AppMock() {
           <span className="grid size-5 place-items-center rounded-[4px] bg-[#e7f3f8] text-[11px]">
             A
           </span>
-          Ada&apos;s Notion
+          Ada&apos;s Workspace
         </div>
         {MOCK_ROWS.map(row => (
           <div

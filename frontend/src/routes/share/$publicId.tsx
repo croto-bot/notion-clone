@@ -2,7 +2,9 @@ import { lazy, Suspense, useMemo } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { NotionLogo } from '@/components/NotionLogo'
 import { PageIcon } from '@/components/PageIcon'
+import { pageColumnClass } from '@/components/PageHeader'
 import { buttonVariants } from '@/components/ui/button'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { useAuth } from '@/contexts/AuthContext'
 import { usePublicPage } from '@/hooks/usePublicPage'
 import type { PageLinkResolver } from '@/features/editor/page-link-context'
@@ -29,14 +31,14 @@ function ShareHeader({ title }: { title: string }) {
   const { isAuthenticated } = useAuth()
   return (
     <header className="bg-background/90 sticky top-0 z-20 flex h-[45px] items-center gap-2 px-3 backdrop-blur">
-      <Link to="/" aria-label="Notion home" className="flex min-w-0 items-center gap-2">
+      <Link to="/" aria-label={`${PRODUCT_NAME} home`} className="flex min-w-0 items-center gap-2">
         <NotionLogo size={22} />
         <span className="truncate text-[14px] font-medium">{title}</span>
       </Link>
       <div className="ml-auto flex items-center gap-1.5">
         {isAuthenticated ? (
           <Link to="/home" className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}>
-            Open Notion
+            Open {PRODUCT_NAME}
           </Link>
         ) : (
           <>
@@ -44,7 +46,7 @@ function ShareHeader({ title }: { title: string }) {
               Log in
             </Link>
             <Link to="/register" className={cn(buttonVariants({ variant: 'default', size: 'sm' }))}>
-              Get Notion free
+              Get {PRODUCT_NAME} free
             </Link>
           </>
         )}
@@ -79,14 +81,18 @@ function SharePage() {
   if (isPending) {
     return (
       <div className="bg-background min-h-screen">
-        <ShareHeader title="Notion" />
+        <ShareHeader title={PRODUCT_NAME} />
+        <div className="mx-auto w-full max-w-[900px] px-6 md:px-24" aria-hidden="true">
+          <div className="h-[72px]" />
+          <div className="bg-hover h-12 w-1/2 animate-pulse rounded-[4px]" />
+        </div>
       </div>
     )
   }
   if (isError || !page) {
     return (
       <div className="bg-background min-h-screen">
-        <ShareHeader title="Notion" />
+        <ShareHeader title={PRODUCT_NAME} />
         <div className="flex flex-col items-center gap-3 px-6 pt-[18vh] text-center">
           <div className="text-[56px] leading-none">🔒</div>
           <h1 className="text-[20px] font-semibold">This page isn&apos;t available</h1>
@@ -94,17 +100,14 @@ function SharePage() {
             It was never published, or its owner stopped sharing it.
           </p>
           <Link to="/" className={cn(buttonVariants({ variant: 'outline' }), 'mt-2')}>
-            Go to Notion
+            Go to {PRODUCT_NAME}
           </Link>
         </div>
       </div>
     )
   }
 
-  const column = cn(
-    'mx-auto w-full px-6 md:px-24',
-    page.full_width ? 'max-w-none' : 'max-w-[900px]'
-  )
+  const column = pageColumnClass(page)
   // The band and the icon strip's overlap follow the same predicate as the
   // editor's cover: a value that cannot render (from before the rule) shows
   // neither a band nor the overlap.
@@ -140,7 +143,15 @@ function SharePage() {
         <div className="h-3" />
       </div>
       <div className={cn(column, 'pb-[20vh]')}>
-        <Suspense fallback={<div className="bg-hover h-4 w-2/3 animate-pulse rounded-[3px]" />}>
+        <Suspense
+          fallback={
+            <div className="animate-pulse space-y-3 py-1" aria-hidden="true">
+              <div className="bg-hover h-5 w-full rounded-[3px]" />
+              <div className="bg-hover h-5 w-5/6 rounded-[3px]" />
+              <div className="bg-hover h-5 w-2/3 rounded-[3px]" />
+            </div>
+          }
+        >
           <PublicBody page={page} />
         </Suspense>
       </div>

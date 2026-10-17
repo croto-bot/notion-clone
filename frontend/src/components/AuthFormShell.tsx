@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { NotionLogo } from '@/components/NotionLogo'
+import { PRODUCT_NAME } from '@/lib/brand'
 
 interface AuthFormShellProps {
   title: string
@@ -8,18 +9,18 @@ interface AuthFormShellProps {
   footer?: React.ReactNode
 }
 
-/** The centered Notion sign-in layout: logo on top, a 380 px column below. */
+/** The centered sign-in layout: logo on top, a 380 px column below. */
 export function AuthFormShell({ title, description, children, footer }: AuthFormShellProps) {
   return (
     <div className="bg-background text-foreground flex min-h-screen flex-col">
       <header className="flex h-[60px] items-center px-5">
         <Link
           to="/"
-          aria-label="Notion home"
+          aria-label={`${PRODUCT_NAME} home`}
           className="hover:bg-hover flex items-center gap-2 rounded-[4px] px-1.5 py-1 transition-colors duration-100"
         >
           <NotionLogo size={26} />
-          <span className="text-[17px] font-bold tracking-tight">Notion</span>
+          <span className="text-[17px] font-bold tracking-tight">{PRODUCT_NAME}</span>
         </Link>
       </header>
       <main className="flex flex-1 flex-col items-center px-6 pt-[8vh] pb-16">

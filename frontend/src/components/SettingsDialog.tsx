@@ -47,6 +47,7 @@ import {
   useUpdateMember,
   useUpdateWorkspace,
 } from '@/hooks/useWorkspaces'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { toastApiError } from '@/lib/error-handler'
 import { cn } from '@/lib/utils'
 import { ROLES, type Member, type Role } from '@/types/workspace'
@@ -179,7 +180,7 @@ function AccountTab() {
 const THEME_OPTIONS: { value: Theme; label: string; icon: React.ReactNode }[] = [
   { value: 'light', label: 'Light', icon: <Sun className="size-4" /> },
   { value: 'dark', label: 'Dark', icon: <Moon className="size-4" /> },
-  { value: 'system', label: 'Use system setting', icon: <Monitor className="size-4" /> },
+  { value: 'system', label: 'System', icon: <Monitor className="size-4" /> },
 ]
 
 /** A tiny picture of the app in the theme it selects. */
@@ -217,7 +218,7 @@ function AppearanceTab() {
       <SectionTitle>Appearance</SectionTitle>
       <div className="mb-3 text-[14px] font-medium">Theme</div>
       <p className="text-muted-foreground mb-4 text-[13px]">
-        Choose how Notion looks. Press Ctrl/Cmd+Shift+L to switch between light and dark.
+        Choose how {PRODUCT_NAME} looks. Press Ctrl/Cmd+Shift+L to switch between light and dark.
       </p>
       <div role="radiogroup" aria-label="Theme" className="flex flex-wrap gap-3">
         {THEME_OPTIONS.map(option => (
