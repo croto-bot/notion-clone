@@ -6,9 +6,11 @@ import {
   createWorkspace,
   deleteWorkspace,
   ensureWorkspace,
+  errorToast,
   listMembers,
   listWorkspaces,
   openWorkspaceMenu,
+  PASSWORD,
   registerUser,
   sidebar,
   uniqueEmail,
@@ -17,6 +19,38 @@ import {
 } from './fixtures'
 
 test.describe('workspaces (F2, F3, F17)', () => {
+  test('caps the first-workspace bootstrap and offers Try again', async ({ loginAs, api }) => {
+    // A display name of exactly 100 UTF-16 units ending in an emoji: the
+    // bootstrap name ("<name>'s Notion", sliced to 100 units) cuts the emoji
+    // in half, and the database rejects the lone surrogate, so the create
+    // fails on the server for real (HTTP 500) on every attempt.
+    const longName = `${'A'.repeat(99)}🚀`
+    const user = await registerUser(api, uniqueEmail('names'), PASSWORD, longName)
+    const page = await loginAs(user)
+
+    await page.goto('/home')
+    const failure = page.getByText('Could not create your workspace').first()
+    const retry = page.getByRole('button', { name: 'Try again' })
+    await expect(retry).toBeVisible({ timeout: 20_000 })
+    await expect(failure).toBeVisible()
+    await expect(errorToast(page)).toHaveCount(1)
+
+    // Try again re-runs exactly one attempt: the same broken name fails again.
+    await retry.click()
+    await expect(retry).toBeVisible({ timeout: 20_000 })
+    await expect(errorToast(page)).toHaveCount(1, { timeout: 10_000 })
+
+    // A name the server accepts makes the next boot succeed end to end.
+    await updateMe(api, user, { display_name: 'Bo' })
+    await page.reload()
+    await expect(
+      page.getByRole('heading', { name: /Good (morning|afternoon|evening)/ })
+    ).toBeVisible({ timeout: 20_000 })
+    expect((await listWorkspaces(api, user)).map(workspace => workspace.name)).toEqual([
+      "Bo's Notion",
+    ])
+  })
+
   test('creates, renames and switches a workspace', async ({ authedPage: page, api, user }) => {
     const first = await ensureWorkspace(api, user)
     await page.goto('/home')
