@@ -43,6 +43,18 @@ repos:
           echo "$d/node_modules is missing: run (cd $d && bun install)"; exit 1; fi;
           exec node_modules/.bin/prettier --write --log-level warn "${@#$d/}"' --
 
+      # --- Demo recorder (scripts/demo/): prettier --write with the frontend's
+      # pinned prettier and config. `make demo-check` also runs tsc on it.
+      - id: demo-prettier
+        name: demo scripts prettier
+        language: system
+        files: ^(template/)?scripts/demo/.*\.(ts|json)$
+        entry: >-
+          bash -c 'f=frontend; if [ ! -d frontend ] && [ -d template/frontend ]; then f=template/frontend; fi;
+          if [ ! -x "$f/node_modules/.bin/prettier" ]; then
+          echo "$f/node_modules is missing: run (cd $f && bun install)"; exit 1; fi;
+          exec "$f/node_modules/.bin/prettier" --config "$f/.prettierrc.json" --write --log-level warn "$@"' --
+
       # --- No mocks: all tests are end-to-end against the real stack.
       # A fast early warning; the real guards are ruff TID251 + the collection
       # hook in backend/tests/conftest.py and ESLint + e2e/guards.spec.ts in

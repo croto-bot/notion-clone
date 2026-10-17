@@ -4,7 +4,7 @@
 	migrate migrate-create migrate-rollback migrate-history migrate-current db-shell db-reset \
 	test test-backend test-backend-cov test-e2e lint lint-fix format typecheck check ci quality \
 	pre-commit-install pre-commit-run setup check-ports start stop restart-all dev dev-backend dev-fresh api-docs api-health \
-	demo-videos
+	demo-videos demo-check
 
 # ty is not a project dependency: run a pinned release with uvx.
 # Supply-chain policy: a release at least 7 days old (0.0.84 = 2026-09-24).
@@ -195,6 +195,7 @@ check: ## Run every static check CI runs, without changing files
 	$(MAKE) frontend-format-check
 	$(MAKE) frontend-build
 	$(MAKE) frontend-typecheck
+	$(MAKE) demo-check
 
 ci: ## Run what CI runs: static checks, then both e2e suites
 	$(MAKE) check
@@ -289,6 +290,11 @@ api-health: ## Check API health endpoint
 # ============================================================================
 # Demo videos
 # ============================================================================
+
+# The recorder scripts use the frontend's pinned prettier, its config and its tsc.
+demo-check: ## Check the demo recorder scripts (prettier + tsc --noEmit; needs frontend/node_modules)
+	frontend/node_modules/.bin/prettier --config frontend/.prettierrc.json --check 'scripts/demo/*.{ts,json}'
+	frontend/node_modules/.bin/tsc -p scripts/demo/tsconfig.json
 
 demo-videos: ## Record the README videos (docs/media) on a throwaway stack (ports 57732, 57195, 57400)
 	trap 'bash scripts/demo/stack.sh down' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM; \
