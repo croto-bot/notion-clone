@@ -133,7 +133,7 @@ export function DatabaseTable() {
 
   return (
     <div
-      className="nx-scroll -ml-8 overflow-x-auto pb-2 pl-8"
+      className="nx-scroll -ml-6 overflow-x-auto pb-2 pl-6 md:-ml-8 md:pl-8"
       data-testid="database-table"
     >
       <div role="table" aria-label="Table" style={{ minWidth: width }}>

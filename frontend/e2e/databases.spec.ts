@@ -553,3 +553,36 @@ test.describe('databases: table rows that grow (fix round 1)', () => {
     expect(Math.abs(checkboxCenter - labelCenter)).toBeLessThanOrEqual(2)
   })
 })
+
+test.describe('databases: the table on small screens (fix round 1)', () => {
+  test('the public table stays inside a phone viewport', async ({ page, api, user }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Phone friendly',
+    })
+    await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: 'Narrow row',
+    })
+    const shared = await updatePage(api, user, database.id, { is_public: true })
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(`/share/${shared.public_id}`)
+    const table = page.getByRole('table', { name: 'Table' })
+    await expect(table).toBeVisible()
+
+    // The gutter that pulls the table into the page padding must never pull it
+    // past the viewport: the scroller starts on screen and the page does not scroll.
+    const scrollerBox = await page.getByTestId('database-table').boundingBox()
+    expect(scrollerBox).toBeTruthy()
+    expect(scrollerBox!.x).toBeGreaterThanOrEqual(-0.5)
+    const overflow = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }))
+    expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
+  })
+})
