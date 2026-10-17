@@ -142,18 +142,27 @@ def _alembic(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str
 
 
 def run_migrations(env: dict[str, str]) -> None:
-    """Apply the real migrations, then fail if the models need a new migration.
+    """Apply the real migrations, prove they reverse, then check them against the models.
 
-    ``alembic upgrade head`` builds the schema. ``alembic check`` then compares
-    it with the SQLAlchemy models: a model change without a migration fails
-    the whole suite here, with Alembic's list of the missing operations.
+    ``alembic upgrade head`` builds the schema. ``alembic downgrade base`` and a
+    second upgrade prove every migration can be rolled back and applied again.
+    ``alembic upgrade head --sql`` proves the offline (SQL script) mode still
+    renders. ``alembic check`` then compares the schema with the SQLAlchemy
+    models: a model change without a migration fails the whole suite here, with
+    Alembic's list of the missing operations.
     """
-    upgrade = _alembic(env, "upgrade", "head")
-    if upgrade.returncode != 0:
-        raise RuntimeError(
-            "`alembic upgrade head` failed against the e2e database:\n"
-            f"{upgrade.stdout}\n{upgrade.stderr}"
-        )
+    for args in (
+        ("upgrade", "head"),
+        ("downgrade", "base"),
+        ("upgrade", "head"),
+        ("upgrade", "head", "--sql"),
+    ):
+        step = _alembic(env, *args)
+        if step.returncode != 0:
+            raise RuntimeError(
+                f"`alembic {' '.join(args)}` failed against the e2e database:\n"
+                f"{step.stdout}\n{step.stderr}"
+            )
     check = _alembic(env, "check")
     if check.returncode != 0:
         raise RuntimeError(
