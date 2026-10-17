@@ -12,6 +12,7 @@ from sentry_sdk.types import Event, Hint
 from sqlalchemy.exc import DBAPIError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.client_id import ClientIdMiddleware
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.core.logging.middleware import WideEventMiddleware
@@ -144,8 +145,10 @@ def create_app(
     app.add_exception_handler(DBAPIError, _database_error_handler)
 
     # Middleware is applied LIFO: last-added = outermost (first to handle request).
-    # Order: CORS → WideEvent. WideEventMiddleware generates the canonical
-    # request_id and emits the wide log.
+    # Order: CORS → WideEvent → ClientId. WideEventMiddleware generates the
+    # canonical request_id and emits the wide log; ClientIdMiddleware tags the
+    # request's tab id onto workspace events.
+    app.add_middleware(ClientIdMiddleware)
     app.add_middleware(WideEventMiddleware)
 
     app.add_middleware(

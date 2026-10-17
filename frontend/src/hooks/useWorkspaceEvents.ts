@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/contexts/AuthContext'
 import { API } from '@/lib/api-endpoints'
+import { clientId } from '@/lib/client-id'
 import { queryKeys } from '@/lib/query-keys'
 import { WS_CLOSE_NOT_FOUND, WS_CLOSE_UNAUTHORIZED, wsUrl } from '@/lib/ws'
 import { invalidatePageLists } from '@/features/pages/page-cache'
@@ -51,7 +52,8 @@ const COALESCE_MS = 250
 
 /**
  * Keeps the open workspace live: connects to `WS /workspaces/{id}/events` and
- * reloads the matching queries when a member changes something. Reconnects with
+ * reloads the matching queries when anyone changes something, except this
+ * tab's own events (`client_id`, skipped in `onmessage`). Reconnects with
  * a growing delay; after a reconnect everything is reloaded, since events may
  * have been missed.
  */
@@ -91,7 +93,14 @@ export function useWorkspaceEvents(workspaceId: string | undefined) {
       }
       socket.onmessage = message => {
         try {
-          schedule(refreshFor(JSON.parse(String(message.data)) as WorkspaceEvent))
+          const event = JSON.parse(String(message.data)) as WorkspaceEvent
+          // This tab's own change: its mutation already owns the caches the
+          // event would refresh, and that refetch can read pre-commit state
+          // and land over the optimistic paint. Only this tab skips (its
+          // `X-Client-Id` matches); the same user's other tabs and every
+          // other member still refresh on the same event.
+          if (event.client_id === clientId) return
+          schedule(refreshFor(event))
         } catch {
           // Not JSON: ignore.
         }

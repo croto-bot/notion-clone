@@ -1,6 +1,7 @@
 import { getConfig } from './config'
 import { getAuthToken, clearAuthToken, announceAuthToken } from './auth'
 import { API } from './api-endpoints'
+import { clientId } from './client-id'
 
 interface ValidationIssue {
   loc: (string | number)[]
@@ -105,6 +106,7 @@ class ApiClient {
         ...options,
         headers: {
           'Content-Type': 'application/json',
+          'X-Client-Id': clientId,
           ...(token && { Authorization: `Bearer ${token}` }),
           ...options?.headers,
         },

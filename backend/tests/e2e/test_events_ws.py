@@ -145,6 +145,38 @@ def test_every_member_receives_events(
         assert owner_event["actor_id"] == editor.id
 
 
+def test_events_carry_the_mutating_tab_client_id(
+    server: LiveServer, auth_client: httpx.Client
+) -> None:
+    """`X-Client-Id` is echoed as `client_id`, so a tab can skip its own events."""
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+    url = _events_url(server, workspace["id"], _token_of(auth_client))
+
+    with connect(url, open_timeout=5) as socket:
+        auth_client.patch(
+            f"/pages/{page['id']}",
+            json={"title": "From a tab"},
+            headers={"X-Client-Id": "tab-1"},
+        )
+        event = _next_event(socket)
+        assert event["type"] == "page.updated"
+        assert event["client_id"] == "tab-1"
+
+        # No header (a client that predates it, or any script): no client_id.
+        auth_client.patch(f"/pages/{page['id']}", json={"title": "From a script"})
+        assert "client_id" not in _next_event(socket)
+
+        # An oversized id is dropped, not truncated: a truncated id could alias
+        # another tab's and silence its events for this one.
+        auth_client.patch(
+            f"/pages/{page['id']}",
+            json={"title": "Long id"},
+            headers={"X-Client-Id": "x" * 65},
+        )
+        assert "client_id" not in _next_event(socket)
+
+
 def test_bad_token_closes_4401(server: LiveServer, auth_client: httpx.Client) -> None:
     workspace = create_workspace(auth_client)
     url = _events_url(server, workspace["id"], "s_not-a-real-token")

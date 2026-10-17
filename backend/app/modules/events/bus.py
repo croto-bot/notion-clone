@@ -8,12 +8,17 @@ process), so every socket served by this process sees every event.
 Payload contract (docs/SPEC.md §WebSockets)::
 
     {"type": "page.created", "page_id": "<uuid>", "actor_id": "<uuid>"}
+
+A change made through a request that identified its browser tab
+(``X-Client-Id``) also carries ``"client_id": "<tab id>"``.
 """
 
 from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any
+
+from app.core.client_id import get_client_id
 
 if TYPE_CHECKING:
     import uuid
@@ -45,7 +50,15 @@ class WorkspaceEventBus:
                 del self._subscribers[workspace_id]
 
     def publish(self, workspace_id: uuid.UUID, event: dict[str, Any]) -> None:
-        """Deliver the event to every subscriber of the workspace, now."""
+        """Deliver the event to every subscriber of the workspace, now.
+
+        A request that sent ``X-Client-Id`` gets it echoed onto the event as
+        ``client_id``: the tab that made the change skips the event (its own
+        mutation already refreshed its caches), every other client, including
+        the same user's other tabs, still refreshes.
+        """
+        if client_id := get_client_id():
+            event = {**event, "client_id": client_id}
         for queue in list(self._subscribers.get(workspace_id, ())):
             try:
                 queue.put_nowait(event)

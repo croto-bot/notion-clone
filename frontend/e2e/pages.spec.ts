@@ -279,6 +279,147 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     }
   })
 
+  test('an edit burst never reverts the editing tab, and still reaches the other tab and another member', async ({
+    authedPage: page,
+    api,
+    user,
+    loginAs,
+  }) => {
+    // The last stale-refetch source: the events socket of the tab that makes
+    // a change used to invalidate that tab's own page detail and lists on the
+    // change's `page.updated` event; the refetch can read pre-commit state and
+    // land over the newer optimistic paint (the sidebar row briefly shows an
+    // older title, frame by frame below). Every request now carries this tab's
+    // `X-Client-Id`, the event echoes it, and the socket skips its own events.
+    // The same user's OTHER tab has its own id and still refreshes, and so
+    // does every other member.
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Multiplayer' })
+    const otherUser = await registerUser(api)
+    await addMember(api, user, workspace.id, otherUser)
+    const other = await loginAs(otherUser)
+
+    await page.goto(`/p/${note.id}`)
+    const title = page.getByLabel('Page title')
+    await expect(title).toBeVisible({ timeout: 15_000 })
+    await expect(sidebar(page).locator(`[data-page-id="${note.id}"]`)).toBeVisible()
+
+    // Tab B of the SAME user: a second page of the same browser context, so
+    // the same session, but its own module state (its own client id) and its
+    // own events socket.
+    const tabB = await page.context().newPage()
+    await tabB.goto(`/p/${note.id}`)
+    await expect(sidebar(tabB).locator(`[data-page-id="${note.id}"]`)).toBeVisible()
+    // The other member reads the same workspace from their own session.
+    await other.goto('/home')
+    await expect(sidebar(other).locator(`[data-page-id="${note.id}"]`)).toBeVisible()
+
+    await page.evaluate(id => {
+      const row = document.querySelector(`[data-page-id="${id}"]`)
+      if (!row) throw new Error('sidebar row not found')
+      const label = () => row.querySelector('span.truncate')?.textContent ?? ''
+      const seen: string[] = [label()]
+      ;(window as typeof window & { __sidebarTitles: string[] }).__sidebarTitles = seen
+      new MutationObserver(() => {
+        const value = label()
+        if (value !== seen[seen.length - 1]) seen.push(value)
+      }).observe(row, { childList: true, characterData: true, subtree: true })
+    }, note.id)
+
+    // One committed PATCH per title, faster than the events socket's 250 ms
+    // coalescing window, so the socket's invalidation refetches overlap the
+    // burst's in-flight mutations: exactly when a pre-commit read could land
+    // over the paint of a newer edit.
+    const titles = Array.from({ length: 60 }, (_, i) => `Burst ${String(i + 1).padStart(2, '0')}`)
+    const finalTitle = titles[titles.length - 1]
+    await page.evaluate(
+      ({ titles, gap }) => {
+        const textarea = document.querySelector<HTMLTextAreaElement>(
+          'textarea[aria-label="Page title"]'
+        )
+        if (!textarea) throw new Error('title input not found')
+        const setValue = Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          'value'
+        )!.set!
+        const type = (value: string) => {
+          setValue.call(textarea, value)
+          textarea.dispatchEvent(new Event('input', { bubbles: true }))
+        }
+        const enter = () =>
+          textarea.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+          )
+        return new Promise<void>(resolve => {
+          let index = 0
+          const step = () => {
+            if (index >= titles.length) {
+              resolve()
+              return
+            }
+            type(titles[index])
+            enter()
+            index += 1
+            setTimeout(step, gap)
+          }
+          step()
+        })
+      },
+      { titles, gap: 20 }
+    )
+
+    await expect(title).toHaveValue(finalTitle)
+    await expect(sidebarPage(page, finalTitle)).toBeVisible()
+    await expect.poll(async () => (await getPage(api, user, note.id)).title).toBe(finalTitle)
+
+    // Everything has settled: keep watching the sidebar row for another
+    // second (a late events flush lands within 250 ms; the observer records
+    // even a one-frame flash), then read the tape.
+    await page.evaluate(
+      id =>
+        new Promise<void>(resolve => {
+          setTimeout(() => {
+            const row = document.querySelector(`[data-page-id="${id}"]`)
+            const state = window as typeof window & { __sidebarTitles?: string[] }
+            // Sample the label too: an observer-only window could miss a
+            // change that reverted and restored between flushes.
+            const value = row?.querySelector('span.truncate')?.textContent ?? ''
+            const seen = state.__sidebarTitles ?? []
+            if (value !== seen[seen.length - 1]) seen.push(value)
+            resolve()
+          }, 1000)
+        }),
+      note.id
+    )
+
+    const seen = await page.evaluate(
+      () => (window as typeof window & { __sidebarTitles?: string[] }).__sidebarTitles ?? []
+    )
+    // The tape must be a subsequence of the edit order: every title the row
+    // ever showed is the initial one or a later edit, and it never stepped
+    // back to an older one. Own-tab events used to break this.
+    const order = ['Multiplayer', ...titles]
+    const ranks = seen.map(value => order.indexOf(value))
+    expect(
+      ranks.every(rank => rank >= 0),
+      `sidebar showed an unknown title: ${JSON.stringify(seen)}`
+    ).toBe(true)
+    for (let i = 1; i < ranks.length; i++) {
+      expect(
+        ranks[i] >= ranks[i - 1],
+        `sidebar replayed an older title: ${JSON.stringify(seen)}`
+      ).toBe(true)
+    }
+    expect(seen[seen.length - 1], `sidebar showed ${JSON.stringify(seen)}`).toBe(finalTitle)
+    await expect(errorToast(page)).toHaveCount(0)
+
+    // The same edits reach the user's other tab and the other member through
+    // their own events sockets.
+    await expect(sidebarPage(tabB, finalTitle)).toBeVisible({ timeout: 15_000 })
+    await expect(sidebarPage(other, finalTitle)).toBeVisible({ timeout: 15_000 })
+    await expect.poll(async () => (await getPage(api, otherUser, note.id)).title).toBe(finalTitle)
+  })
+
   test('trashes a page, restores it, then deletes it forever', async ({
     authedPage: page,
     api,
