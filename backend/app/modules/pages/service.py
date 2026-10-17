@@ -201,10 +201,21 @@ class PageService(BaseService[Page]):
         return chain
 
     async def _breadcrumbs(self, page: Page) -> list[Breadcrumb]:
-        chain = await self._ancestor_chain(
-            page.parent_id,
-            lambda parent_id: self.repo.get(parent_id, raise_error=False),
-        )
+        """Parents, root first, from one cycle-safe id query and one get_many."""
+        ancestor_ids = await self.repo.ancestor_ids(page.id)
+        if not ancestor_ids:
+            return []
+        nodes = {node.id: node for node in await self.repo.get_many(ancestor_ids)}
+        chain: list[Page] = []
+        seen: set[uuid.UUID] = set()
+        current_id = page.parent_id
+        while current_id is not None and current_id not in seen:
+            seen.add(current_id)
+            parent = nodes.get(current_id)
+            if parent is None:
+                break
+            chain.append(parent)
+            current_id = parent.parent_id
         return [
             Breadcrumb(id=parent.id, title=parent.title, icon=parent.icon)
             for parent in reversed(chain)
