@@ -19,10 +19,34 @@ interface Lane {
 interface Activity {
   pending: number
   settledAt: number
+  pruneTimer: ReturnType<typeof setTimeout> | undefined
 }
 
 const lanes = new Map<string, Lane>()
 const activity = new Map<string, Activity>()
+
+function activityOf(id: string): Activity {
+  let current = activity.get(id)
+  if (!current) {
+    current = { pending: 0, settledAt: 0, pruneTimer: undefined }
+    activity.set(id, current)
+  }
+  return current
+}
+
+/** Drops the entry once nothing is pending and the window has passed. */
+function schedulePrune(id: string, current: Activity) {
+  if (current.pruneTimer !== undefined) return
+  current.pruneTimer = setTimeout(
+    () => {
+      current.pruneTimer = undefined
+      if (current.pending > 0) return
+      if (hasRecentPageMutation(id)) schedulePrune(id, current)
+      else if (activity.get(id) === current) activity.delete(id)
+    },
+    Math.max(0, current.settledAt + RECENT_MUTATION_MS - Date.now())
+  )
+}
 
 function laneOf(id: string): Lane {
   let lane = lanes.get(id)
@@ -57,13 +81,20 @@ export function hasRecentPageMutation(id: string, now = Date.now()): boolean {
 
 /** Marks the page mutated for the life of `run`, then for {@link RECENT_MUTATION_MS}. */
 export function trackPageMutation<T>(pageId: string, run: () => Promise<T>): Promise<T> {
-  const current = activity.get(pageId) ?? { pending: 0, settledAt: 0 }
+  const current = activityOf(pageId)
   current.pending += 1
-  activity.set(pageId, current)
   return run().finally(() => {
     current.pending -= 1
     current.settledAt = Date.now()
+    schedulePrune(pageId, current)
   })
+}
+
+/** Marks a change this tab made outside a mutation (a collab edit) as recent. */
+export function notePageActivity(pageId: string) {
+  const current = activityOf(pageId)
+  current.settledAt = Date.now()
+  schedulePrune(pageId, current)
 }
 
 /**
