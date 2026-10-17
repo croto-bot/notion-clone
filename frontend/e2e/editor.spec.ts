@@ -8,9 +8,11 @@ import {
   ensureWorkspace,
   FRONTEND_URL,
   getDocument,
+  getMe,
   listComments,
   pageCollabPath,
   registerUser,
+  sidebar,
   sidebarPage,
   trashPage,
   uniqueEmail,
@@ -188,6 +190,65 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
     await expect
       .poll(async () => (await getDocument(api, user, note.id)).state, { timeout: 15_000 })
       .not.toBeNull()
+  })
+
+  test('a display-name change keeps the collab session alive', async ({
+    authedPage: page,
+    loginAs,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Same session' })
+    const peer = await registerUser(api, uniqueEmail('peer'), PASSWORD, 'Peer Pal')
+    await addMember(api, user, workspace.id, peer, 'editor')
+    const peerPage = await loginAs(peer)
+
+    await page.goto(`/p/${note.id}`)
+    const editor = page.getByTestId('editor')
+    await expect(editor).toBeVisible({ timeout: 15_000 })
+    await editor.click()
+    await page.keyboard.insertText('Hello from A')
+    await peerPage.goto(`/p/${note.id}`)
+    await expect(peerPage.getByTestId('editor')).toContainText('Hello from A', {
+      timeout: 15_000,
+    })
+    const presence = peerPage.getByRole('group', { name: 'People on this page' })
+    await expect(presence).toBeVisible({ timeout: 15_000 })
+
+    // Watch for any moment the presence disappears from the peer's DOM: a
+    // session teardown would drop the user from the room (socket close, the
+    // server broadcasts the removal) before a new one rejoins.
+    await peerPage.evaluate(() => {
+      const w = window as unknown as { __presenceEverAbsent?: boolean }
+      new MutationObserver(() => {
+        if (!document.querySelector('[data-testid="presence-avatars"]')) {
+          w.__presenceEverAbsent = true
+        }
+      }).observe(document.body, { childList: true, subtree: true })
+    })
+
+    // Rename the account: the same provider and doc must stay, and the room
+    // learns the new name as an in-place awareness update.
+    await sidebar(page).getByRole('button', { name: 'Settings' }).click()
+    const name = page.getByRole('dialog', { name: 'Settings' }).getByLabel('Preferred name')
+    await name.fill('Ada Lovelace')
+    await name.press('Enter')
+    await expect.poll(async () => (await getMe(api, user)).display_name).toBe('Ada Lovelace')
+    await page.keyboard.press('Escape')
+
+    await editor.click()
+    await page.keyboard.insertText('Ada was here')
+    await expect(peerPage.getByTestId('editor')).toContainText('Ada was here', {
+      timeout: 15_000,
+    })
+    await expect(peerPage.getByRole('img', { name: 'Ada Lovelace' })).toBeVisible({
+      timeout: 15_000,
+    })
+    const everAbsent = await peerPage.evaluate(
+      () => (window as unknown as { __presenceEverAbsent?: boolean }).__presenceEverAbsent ?? false
+    )
+    expect(everAbsent).toBe(false)
   })
 
   test('the sidebar updates when another member adds a page', async ({

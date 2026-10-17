@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import * as Y from 'yjs'
 import { WebsocketProvider } from 'y-websocket'
 import { useAuth } from '@/contexts/AuthContext'
@@ -69,23 +69,32 @@ export function useCollabSession(pageId: string): CollabSession | null {
 
   const myId = me?.id
   const myName = me ? displayNameOf(me) : undefined
+  // The identity the socket should speak for. Kept in a ref (updated before
+  // the effects below run) so a display-name change does not become a
+  // dependency of the socket's lifecycle: one provider per page and token.
+  const identityRef = useRef<{ id: string; name: string } | null>(null)
+  useEffect(() => {
+    identityRef.current = myId && myName ? { id: myId, name: myName } : null
+  })
+  const identityReady = !!myId && !!myName
 
   useEffect(() => {
-    if (!token || !myId || !myName) return
+    const identity = identityRef.current
+    if (!token || !identity) return
     const doc = new Y.Doc()
     // y-websocket joins `${serverUrl}/${roomName}?${params}`: this is `/pages/{id}/collab?token=…`.
     const provider = new WebsocketProvider(wsBaseUrl(), API.WS.PAGE_COLLAB(pageId).slice(1), doc, {
       params: { token },
     })
     provider.awareness.setLocalStateField('user', {
-      id: myId,
-      name: myName,
-      color: colorForUser(myId),
+      id: identity.id,
+      name: identity.name,
+      color: colorForUser(identity.id),
     })
 
     const onStatus = ({ status: next }: { status: CollabStatus }) => setStatus(next)
     const onSync = (isSynced: boolean) => setSynced(isSynced)
-    const onAwareness = () => setUsers(readUsers(provider, myId))
+    const onAwareness = () => setUsers(readUsers(provider, identity.id))
     const onClose = (event: CloseEvent | null) => {
       // The backend refuses with these codes: retrying would loop forever.
       if (event && (event.code === WS_CLOSE_UNAUTHORIZED || event.code === WS_CLOSE_NOT_FOUND)) {
@@ -110,7 +119,18 @@ export function useCollabSession(pageId: string): CollabSession | null {
       setSynced(false)
       setUsers([])
     }
-  }, [pageId, token, myId, myName, store])
+  }, [pageId, token, identityReady, store])
+
+  // A display-name change reaches the room as an in-place awareness update:
+  // the same provider, the same doc, the editor and its history stay put.
+  useEffect(() => {
+    if (!live || !myId || !myName) return
+    live.provider.awareness.setLocalStateField('user', {
+      id: myId,
+      name: myName,
+      color: colorForUser(myId),
+    })
+  }, [live, myId, myName])
 
   if (!live || !myId || !myName) return null
   return {
