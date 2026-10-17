@@ -42,3 +42,41 @@ test.describe('theme application', () => {
     await expect(page.locator('html')).toHaveCSS('background-color', 'rgb(25, 25, 25)')
   })
 })
+
+/** The pre-paint theme script exactly as the server sent it in `<head>`. */
+async function servedThemeScript(page: Page): Promise<{ head: string; script: string }> {
+  const response = await page.goto('/')
+  const html = (await response?.text()) ?? ''
+  const head = html.slice(0, html.indexOf('</head>'))
+  const script = /<script[^>]*>([^<]*nx-theme[^<]*)<\/script>/.exec(head)?.[1]
+  expect(script, 'the head carries the theme script').toBeTruthy()
+  return { head, script: script! }
+}
+
+/** Runs code the server sent, the way the browser runs the head script: a new script element. */
+async function runAsScript(page: Page, source: string): Promise<void> {
+  await page.evaluate(code => {
+    const element = document.createElement('script')
+    element.textContent = code
+    document.head.append(element)
+    element.remove()
+  }, source)
+}
+
+test.describe('theme application (fix round 2)', () => {
+  test('the head script sets the browser-chrome color before React runs', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' })
+    const { head, script } = await servedThemeScript(page)
+    // The script can only set a meta tag the parser has already created.
+    expect(head.indexOf('name="theme-color"')).toBeGreaterThan(-1)
+    expect(head.indexOf('name="theme-color"')).toBeLessThan(head.indexOf(script))
+    const meta = page.locator('meta[name="theme-color"]')
+    await expect(meta).toHaveAttribute('content', '#191919')
+
+    // Reset the color, then run only the served head script: it alone must
+    // paint the dark chrome color, with no React effect involved.
+    await meta.evaluate(element => element.setAttribute('content', '#ffffff'))
+    await runAsScript(page, script)
+    await expect(meta).toHaveAttribute('content', '#191919')
+  })
+})

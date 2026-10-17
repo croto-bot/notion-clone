@@ -264,4 +264,21 @@ export default [
       'jsx-a11y/label-has-associated-control': 'off',
     },
   },
+  {
+    // THEME_SCRIPT inlines applyStoredTheme as source text, where module-scope names do not exist.
+    files: ['src/lib/theme.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...[
+          "FunctionDeclaration[id.name='applyStoredTheme'] Identifier[name=/^[A-Z][A-Z0-9_]+$/]",
+          "FunctionDeclaration[id.name='applyStoredTheme'] CallExpression > Identifier.callee",
+        ].map(selector => ({
+          selector,
+          message:
+            'applyStoredTheme runs as inlined source in the head script: use only its parameters and browser globals.',
+        })),
+      ],
+    },
+  },
 ]

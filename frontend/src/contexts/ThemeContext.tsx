@@ -12,7 +12,6 @@ import {
   prefersDark,
   readStoredTheme,
   safeStorage,
-  THEME_COLOR,
   THEME_KEY,
   type ResolvedTheme,
   type Theme,
@@ -67,10 +66,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   // script already painted. The snapshot is only the signal that the choice
   // changed (pick, OS switch, another tab).
   useLayoutEffect(() => {
-    const resolved = applyStoredTheme(THEME_KEY, safeStorage(), prefersDark())
-    document
-      .querySelector('meta[name="theme-color"]')
-      ?.setAttribute('content', THEME_COLOR[resolved])
+    applyStoredTheme(THEME_KEY, safeStorage(), prefersDark())
   }, [snapshot])
 
   const setTheme = useCallback((next: Theme) => {

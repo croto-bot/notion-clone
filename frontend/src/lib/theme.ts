@@ -13,12 +13,6 @@ export type ResolvedTheme = 'light' | 'dark'
 /** localStorage key of the theme choice. */
 export const THEME_KEY = 'nx-theme'
 
-/** The browser-chrome color (`<meta name="theme-color">`) per resolved theme. */
-export const THEME_COLOR: Record<ResolvedTheme, string> = {
-  light: '#ffffff',
-  dark: '#191919',
-}
-
 declare global {
   interface Window {
     /**
@@ -34,12 +28,9 @@ declare global {
 /**
  * The resolver: the stored value ('light' | 'dark' | 'system'; unreadable or
  * invalid storage counts as no choice), 'system' resolved through the OS
- * preference, applied to the document as the `dark` class and `color-scheme`.
- * Returns what it applied.
- *
- * Self-contained on purpose (only its parameters and browser globals):
- * `THEME_SCRIPT` embeds this function's compiled source, so it must not
- * reference anything from the module scope.
+ * preference, applied to the document as the `dark` class, `color-scheme`
+ * and the browser-chrome color (`<meta name="theme-color">`, the light and
+ * dark `--background`). Returns what it applied.
  */
 export function applyStoredTheme(
   key: string,
@@ -57,6 +48,9 @@ export function applyStoredTheme(
   const root = document.documentElement
   root.classList.toggle('dark', resolved === 'dark')
   root.style.colorScheme = resolved
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute('content', resolved === 'dark' ? '#191919' : '#ffffff')
   const history = (window.__nxThemeHistory ??= [])
   history.push(resolved)
   return resolved
@@ -95,6 +89,7 @@ export function prefersDark(): boolean {
  * The pre-paint head script: the shared resolver, with the storage and media
  * access guarded so a browser that blocks either still resolves 'system'.
  */
+// applyStoredTheme is inlined here as source text: it may use only its parameters and browser globals.
 export const THEME_SCRIPT = [
   '(function(){',
   'var s=null,d=false;',
