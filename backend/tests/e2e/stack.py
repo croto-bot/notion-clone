@@ -106,7 +106,9 @@ def server_environment(db_url: str) -> dict[str, str]:
     return {
         **os.environ,
         "PYTHONUNBUFFERED": "1",
-        "DB_URL": db_url,
+        # The asyncpg form (as SQLAlchemy's async engine names it): the app
+        # and Alembic must both accept it, not only the plain postgresql://.
+        "DB_URL": db_url.replace("postgresql://", "postgresql+asyncpg://", 1),
         "DB_POOL_SIZE": str(SERVER_DB_POOL_SIZE),
         "DB_POOL_PRE_PING": "false",
         "APP_NAME": "backend-e2e",
@@ -122,6 +124,10 @@ def server_environment(db_url: str) -> dict[str, str]:
         "LOG_FORMAT": "json",
         "FRONTEND_URL": FRONTEND_URL,
         "SENTRY_DSN": "",
+        # Deployment context: every log line carries these (configure_logging).
+        "VERSION": "e2e-version",
+        "COMMIT_HASH": "e2e-commit",
+        "INSTANCE_ID": "e2e-instance",
         "GOOGLE_CLIENT_ID": "e2e-client-id",
         "GOOGLE_CLIENT_SECRET": "e2e-client-secret",
         "GOOGLE_TOKEN_URL": f"{UNREACHABLE_OAUTH_PROVIDER}/token",
@@ -129,7 +135,8 @@ def server_environment(db_url: str) -> dict[str, str]:
     }
 
 
-def _alembic(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+def run_alembic(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+    """Run the real Alembic CLI in backend/ with ``env``; never raises on failure."""
     return subprocess.run(
         [sys.executable, "-m", "alembic", *args],
         cwd=BACKEND_DIR,
@@ -157,13 +164,13 @@ def run_migrations(env: dict[str, str]) -> None:
         ("upgrade", "head"),
         ("upgrade", "head", "--sql"),
     ):
-        step = _alembic(env, *args)
+        step = run_alembic(env, *args)
         if step.returncode != 0:
             raise RuntimeError(
                 f"`alembic {' '.join(args)}` failed against the e2e database:\n"
                 f"{step.stdout}\n{step.stderr}"
             )
-    check = _alembic(env, "check")
+    check = run_alembic(env, "check")
     if check.returncode != 0:
         raise RuntimeError(
             "The SQLAlchemy models and the migrations disagree (`alembic check`).\n"
@@ -243,7 +250,18 @@ class Database:
 
 
 # Keys left out of ServerLog.render(): shown elsewhere or the same on every line.
-_RENDER_SKIP = frozenset({"level", "message", "service", "environment", "timestamp"})
+_RENDER_SKIP = frozenset(
+    {
+        "level",
+        "message",
+        "service",
+        "environment",
+        "version",
+        "commit_hash",
+        "instance_id",
+        "timestamp",
+    }
+)
 
 
 def _parse_event(line: str) -> dict[str, Any] | None:

@@ -129,7 +129,7 @@ Docker Compose does **not** read `backend/.env`. The backend container gets its 
 |---|---|---|
 | `BACKEND_PORT`, `FRONTEND_PORT`, `DB_PORT` | `9095`, `3000`, `5432` | Host ports. Check what is free: `make check-ports` |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | the project name (`app` in the raw template; `ai-fsr init` sets them) | Used by `db`, and to build the backend `DB_URL` (host `db`) |
-| `DB_URL` | built from `POSTGRES_*` | Not in `.env.example`. Set it only for an external Postgres, or when the password has `@ : / # %` (URL-encode them) |
+| `DB_URL` | built from `POSTGRES_*` | Not in `.env.example`. Set it only for an external Postgres, or when the password has `@ : / # %` (URL-encode them). Accepted schemes: `postgresql://`, `postgres://`, `postgresql+asyncpg://`, `postgresql+psycopg://` (the app and Alembic accept the same forms) |
 | `DB_POOL_SIZE`, `DB_POOL_PRE_PING` | `100`, `false` | SQLAlchemy pool |
 | `APP_NAME`, `ENVIRONMENT`, `DEBUG_MODE` | `backend`, `local`, `false` | Sentry is off when `ENVIRONMENT=local` |
 | `LOG_LEVEL`, `LOG_FORMAT` | `INFO`, `console` | `json` = one wide event per request, for log shipping |
