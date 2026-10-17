@@ -29,13 +29,16 @@ interface DocumentEditorProps {
 /**
  * The editor mounts once the document is safe to show, and then stays
  * mounted for the life of the provider: after the first sync (`hasSynced`,
- * which a network drop cannot take away), or when the socket has given up
- * for good (`status === 'disconnected'`, the server refused with a terminal
- * close code). While it has never synced, mounting would hand the user an
- * empty, editable document that the real content then overwrites.
+ * which a network drop cannot take away), or when the server refused the
+ * socket for good (`terminal`, close code 4401/4404). Every other close is a
+ * retryable blip (y-websocket emits `disconnected` on any close of a socket
+ * that reached `open`, then `connecting` on every retry), so a drop during
+ * the first handshake must keep the skeleton up: mounting BlockNote on the
+ * empty doc would insert a default block that later merges into the real
+ * document.
  */
 export function DocumentEditor({ page, session, editable }: DocumentEditorProps) {
-  if (!session || !(session.hasSynced || session.status === 'disconnected')) {
+  if (!session || !(session.hasSynced || session.terminal)) {
     return <EditorSkeleton />
   }
   return <CollabEditor page={page} session={session} editable={editable} />

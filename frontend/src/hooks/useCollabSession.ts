@@ -26,8 +26,6 @@ export interface CollabSession {
   status: CollabStatus
   /** Other people on the page, once per person (a person with two tabs shows once). */
   users: PresenceUser[]
-  /** True while the document is fully synced with the server right now. */
-  synced: boolean
   /**
    * True once this provider has completed a sync, until the provider is
    * destroyed. A drop makes `synced` false while the socket retries (y-websocket
@@ -37,6 +35,13 @@ export interface CollabSession {
    * in the Yjs doc and merge on reconnect (SPEC F6).
    */
   hasSynced: boolean
+  /**
+   * True once the server refused this page's socket for good (4401/4404):
+   * retrying is pointless, so the editor mounts on the empty document as-is.
+   * Any other close is a blip (the socket retries), not a verdict: mounting
+   * then would hand the user an editable empty document before the first sync.
+   */
+  terminal: boolean
   user: { id: string; name: string; color: string }
 }
 
@@ -73,8 +78,8 @@ export function useCollabSession(pageId: string): CollabSession | null {
   const [store] = useState(() => createValueStore<Live | null>(null))
   const live = useSyncExternalStore(store.subscribe, store.get, () => null)
   const [status, setStatus] = useState<CollabStatus>('connecting')
-  const [synced, setSynced] = useState(false)
   const [hasSynced, setHasSynced] = useState(false)
+  const [terminal, setTerminal] = useState(false)
   const [users, setUsers] = useState<PresenceUser[]>([])
 
   const myId = me?.id
@@ -103,16 +108,18 @@ export function useCollabSession(pageId: string): CollabSession | null {
     })
 
     const onStatus = ({ status: next }: { status: CollabStatus }) => setStatus(next)
-    // `synced` follows the socket; `hasSynced` latches on the first sync and is
-    // only cleared when this provider goes away (the cleanup below).
+    // `hasSynced` latches on the first sync and is only cleared when this
+    // provider goes away (the cleanup below).
     const onSync = (isSynced: boolean) => {
-      setSynced(isSynced)
       if (isSynced) setHasSynced(true)
     }
     const onAwareness = () => setUsers(readUsers(provider, identity.id))
     const onClose = (event: CloseEvent | null) => {
-      // The backend refuses with these codes: retrying would loop forever.
+      // The backend refuses with these codes: retrying would loop forever, and
+      // the page is not coming back on this socket. The editor may mount on
+      // the empty document instead of waiting for a sync that will not come.
       if (event && (event.code === WS_CLOSE_UNAUTHORIZED || event.code === WS_CLOSE_NOT_FOUND)) {
+        setTerminal(true)
         provider.disconnect()
       }
     }
@@ -131,8 +138,8 @@ export function useCollabSession(pageId: string): CollabSession | null {
       doc.destroy()
       store.set(null)
       setStatus('connecting')
-      setSynced(false)
       setHasSynced(false)
+      setTerminal(false)
       setUsers([])
     }
   }, [pageId, token, identityReady, store])
@@ -152,8 +159,8 @@ export function useCollabSession(pageId: string): CollabSession | null {
   return {
     ...live,
     status,
-    synced,
     hasSynced,
+    terminal,
     users,
     user: { id: myId, name: myName, color: colorForUser(myId) },
   }
