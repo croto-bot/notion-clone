@@ -15,7 +15,7 @@ export interface DatabaseInput {
   allRows: RowLike[]
   members: Member[]
   setActiveView: (viewId: string) => void
-  onSaveSchema: (schema: DatabaseProperty[]) => void
+  onSaveSchema: (schema: DatabaseProperty[]) => Promise<unknown>
   onSaveViews: (views: DatabaseView[]) => void
   onSetRowValue: (row: RowLike, property: DatabaseProperty, value: PropertyValue) => void
   onCreateRow: (properties?: Record<string, PropertyValue>) => Promise<string | null>
@@ -35,8 +35,10 @@ function hasValue(row: RowLike, propertyId: string): boolean {
 }
 
 export function buildDatabaseContext(input: DatabaseInput): DatabaseContextValue {
-  const saveSchema = (schema: DatabaseProperty[]) => {
-    if (input.editable) input.onSaveSchema(schema)
+  const saveSchema = async (schema: DatabaseProperty[]) => {
+    if (!input.editable) return false
+    const saved = await input.onSaveSchema(schema)
+    return saved !== false && saved !== null && saved !== undefined
   }
   const saveViews = (views: DatabaseView[]) => {
     if (input.editable) input.onSaveViews(views)
@@ -49,12 +51,13 @@ export function buildDatabaseContext(input: DatabaseInput): DatabaseContextValue
       if (hasValue(row, property.id)) input.onSetRowValue(row, property, null)
     }
   }
-  const updateProperty = (property: DatabaseProperty) => {
-    if (!input.editable) return
+  const updateProperty = async (property: DatabaseProperty) => {
+    if (!input.editable) return false
     const previous = input.schema.find(item => item.id === property.id)
     const next = normalizeProperty(property)
-    saveSchema(input.schema.map(item => (item.id === next.id ? next : item)))
-    if (previous && previous.type !== next.type) clearOnRows(next)
+    const ok = await saveSchema(input.schema.map(item => (item.id === next.id ? next : item)))
+    if (ok && previous && previous.type !== next.type) clearOnRows(next)
+    return ok
   }
   const deleteProperty = (propertyId: string) => {
     if (!input.editable) return

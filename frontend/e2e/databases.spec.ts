@@ -123,6 +123,68 @@ test.describe('databases and publish (F13, F15)', () => {
     }
   })
 
+  test('stores a created select option only after its schema change is saved', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Atomic',
+    })
+    const status = property(database.database_schema, 'Status')
+    const row = await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: 'Atomic row',
+    })
+    await page.goto(`/p/${database.id}`)
+    await expect(page.getByRole('row', { name: 'Atomic row' })).toBeVisible()
+
+    // Watch the real request order: the row's value may only be sent once the
+    // schema that defines the new option has been confirmed, so no reader can
+    // ever see a row referencing an option missing from the schema.
+    const order: string[] = []
+    page.on('request', request => {
+      if (request.method() !== 'PATCH') return
+      if (request.url().endsWith(`/pages/${database.id}`)) order.push('schema:sent')
+      if (request.url().endsWith(`/pages/${row.id}`)) order.push('row:sent')
+    })
+    page.on('response', response => {
+      if (response.request().method() !== 'PATCH') return
+      if (response.url().endsWith(`/pages/${database.id}`)) order.push('schema:saved')
+    })
+
+    await page.getByRole('button', { name: 'Status of Atomic row' }).click()
+    const box = page.getByLabel('Search or create an option')
+    await box.fill('Urgent')
+    await box.press('Enter')
+
+    await expect
+      .poll(async () => {
+        const saved = await getPage(api, user, database.id)
+        const options = saved.database_schema?.find(item => item.id === status.id)?.options ?? []
+        return options.some(option => option.name === 'Urgent')
+      })
+      .toBe(true)
+    const savedSchema = await getPage(api, user, database.id)
+    const urgent = savedSchema.database_schema
+      ?.find(item => item.id === status.id)
+      ?.options?.find(option => option.name === 'Urgent')
+    expect(urgent).toBeTruthy()
+    await expect
+      .poll(async () => (await listRows(api, user, database.id))[0].properties?.[status.id])
+      .toBe(urgent!.id)
+
+    const rowSentAt = order.indexOf('row:sent')
+    const schemaSavedAt = order.indexOf('schema:saved')
+    expect(rowSentAt).toBeGreaterThan(-1)
+    expect(schemaSavedAt).toBeGreaterThan(-1)
+    expect(rowSentAt).toBeGreaterThan(schemaSavedAt)
+  })
+
   test('drags a card between board columns', async ({ authedPage: page, api, user }) => {
     const workspace = await ensureWorkspace(api, user)
     const database = await createPage(api, user, {

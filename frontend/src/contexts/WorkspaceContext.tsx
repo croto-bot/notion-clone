@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { NotionLogo } from '@/components/NotionLogo'
 import { useCurrentUser, displayNameOf } from '@/hooks/useUser'
@@ -8,9 +8,6 @@ import type { Role, Workspace } from '@/types/workspace'
 
 /** localStorage key of the workspace shown last. */
 export const WORKSPACE_KEY = 'nx-workspace'
-
-/** Where the first-workspace bootstrap stands: one attempt at a time, never a silent loop. */
-type BootstrapPhase = 'idle' | 'creating' | 'done' | 'failed'
 
 interface WorkspaceContextValue {
   workspaces: Workspace[]
@@ -50,29 +47,28 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const { data: me } = useCurrentUser()
   const createWorkspace = useCreateWorkspace()
   const [selectedId, setSelectedId] = useState<string | null>(readStoredWorkspaceId)
-  const [bootstrap, setBootstrap] = useState<BootstrapPhase>('idle')
   const [bootstrapError, setBootstrapError] = useState<string | null>(null)
+  // Guards the single in-flight create attempt; re-armed only by Try again.
+  const creating = useRef(false)
+  const bootstrapFailed = bootstrapError !== null
 
   useEffect(() => {
-    if (!workspaces || workspaces.length > 0 || !me || bootstrap !== 'idle') return
-    // Exactly one attempt per 'idle': a failed create stops here (the Try
-    // again button below re-arms it) instead of retrying on every re-render.
-    setBootstrap('creating')
+    if (bootstrapFailed || creating.current) return
+    if (!workspaces || workspaces.length > 0 || !me) return
+    // Exactly one attempt: a failed create stops here (the Try again button
+    // below re-arms it) instead of retrying on every re-render of this provider.
+    creating.current = true
     createWorkspace.mutate(
       { name: `${displayNameOf(me)}'s Notion`.slice(0, 100) },
       {
-        onSuccess: workspace => {
-          setBootstrap('done')
-          setSelectedId(workspace.id)
-        },
+        onSuccess: workspace => setSelectedId(workspace.id),
         onError: err => {
           setBootstrapError(getErrorMessage(err))
-          setBootstrap('failed')
           toastApiError(err, 'Could not create your workspace')
         },
       }
     )
-  }, [workspaces, me, createWorkspace, bootstrap])
+  }, [workspaces, me, createWorkspace, bootstrapFailed])
 
   const workspace = workspaces?.find(item => item.id === selectedId) ?? workspaces?.[0]
   const currentId = workspace?.id
@@ -108,15 +104,15 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     )
   }
 
-  if (bootstrap === 'failed') {
+  if (bootstrapFailed) {
     return (
       <FullScreenMessage>
         <p className="text-foreground text-[16px] font-medium">Could not create your workspace</p>
         <p className="text-[14px]">{bootstrapError}</p>
         <Button
           onClick={() => {
+            creating.current = false
             setBootstrapError(null)
-            setBootstrap('idle')
           }}
         >
           Try again

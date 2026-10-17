@@ -19,11 +19,13 @@ export interface DatabaseContextValue {
   allRows: RowLike[]
   members: Member[]
   setActiveView: (viewId: string) => void
-  saveSchema: (schema: DatabaseProperty[]) => void
+  /** Saves the schema; resolves false when the save failed (editable only). */
+  saveSchema: (schema: DatabaseProperty[]) => Promise<boolean>
   saveViews: (views: DatabaseView[]) => void
   /** Replaces one view (matched by id). */
   updateView: (view: DatabaseView) => void
-  updateProperty: (property: DatabaseProperty) => void
+  /** Saves one property into the schema; resolves false when the save failed. */
+  updateProperty: (property: DatabaseProperty) => Promise<boolean>
   deleteProperty: (propertyId: string) => void
   setRowValue: (row: RowLike, property: DatabaseProperty, value: PropertyValue) => void
   /** Creates a row (optionally with values) and returns its id. */

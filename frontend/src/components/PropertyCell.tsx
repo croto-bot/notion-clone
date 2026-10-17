@@ -352,12 +352,19 @@ function SelectCell({ property, value, variant, editable, commit, row }: EditorP
           onPick={pick}
           onOptions={options => updateProperty({ ...property, options })}
           onCreate={option => {
-            updateProperty({ ...property, options: [...optionsOf(property), option] })
-            if (multi) commit([...ids, option.id])
-            else {
-              commit(option.id)
-              setOpen(false)
-            }
+            // The option must exist in the schema before any row references
+            // it: wait for that save, and keep the row untouched when it
+            // fails, so an option id missing from the schema is never stored.
+            void updateProperty({ ...property, options: [...optionsOf(property), option] }).then(
+              ok => {
+                if (!ok) return
+                if (multi) commit([...ids, option.id])
+                else {
+                  commit(option.id)
+                  setOpen(false)
+                }
+              }
+            )
           }}
         />
       </PopoverContent>

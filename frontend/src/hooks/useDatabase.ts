@@ -7,9 +7,7 @@ export function useDatabaseMutations(databaseId: string) {
   const { updatePage, createPage, openPage } = usePageActions()
 
   const saveSchema = useCallback(
-    (schema: DatabaseProperty[]) => {
-      void updatePage(databaseId, { database_schema: schema })
-    },
+    (schema: DatabaseProperty[]) => updatePage(databaseId, { database_schema: schema }),
     [databaseId, updatePage]
   )
 
