@@ -66,7 +66,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   // script already painted. The snapshot is only the signal that the choice
   // changed (pick, OS switch, another tab).
   useLayoutEffect(() => {
-    applyStoredTheme(THEME_KEY, safeStorage(), prefersDark())
+    applyStoredTheme(THEME_KEY, safeStorage(), prefersDark(), import.meta.env.DEV)
   }, [snapshot])
 
   const setTheme = useCallback((next: Theme) => {

@@ -79,4 +79,22 @@ test.describe('theme application (fix round 2)', () => {
     await runAsScript(page, script)
     await expect(meta).toHaveAttribute('content', '#191919')
   })
+
+  test('the theme history is recorded only when asked (dev), never in production', async ({
+    page,
+  }) => {
+    const { script } = await servedThemeScript(page)
+    const resolver = /\((function applyStoredTheme[\s\S]*?)\)\("nx-theme"/.exec(script)?.[1]
+    expect(resolver, 'the head script embeds the shared resolver').toBeTruthy()
+    await expect(page.locator('html')).toHaveCSS('color-scheme', 'light')
+    const before = (await themeHistory(page)).length
+
+    // What production runs: the same resolver with recording off.
+    await runAsScript(page, `(${resolver})("nx-theme", localStorage, false, false)`)
+    expect((await themeHistory(page)).length).toBe(before)
+
+    // The dev server's own call records, which the specs above rely on.
+    await runAsScript(page, `(${resolver})("nx-theme", localStorage, false, true)`)
+    expect(await themeHistory(page)).toHaveLength(before + 1)
+  })
 })

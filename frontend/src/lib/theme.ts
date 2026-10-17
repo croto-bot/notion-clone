@@ -17,9 +17,9 @@ declare global {
   interface Window {
     /**
      * Every theme this tab has applied, oldest first: the pre-paint script
-     * first, then each application by the provider. It is the page's own
-     * record of what was shown, and the e2e suite reads it to prove the wrong
-     * theme never appeared.
+     * first, then each application by the provider. Dev builds only (the e2e
+     * suite runs the dev server and reads it to prove the wrong theme never
+     * appeared); production never creates it.
      */
     __nxThemeHistory?: string[]
   }
@@ -30,12 +30,14 @@ declare global {
  * invalid storage counts as no choice), 'system' resolved through the OS
  * preference, applied to the document as the `dark` class, `color-scheme`
  * and the browser-chrome color (`<meta name="theme-color">`, the light and
- * dark `--background`). Returns what it applied.
+ * dark `--background`). With `record`, also appends to
+ * `window.__nxThemeHistory`. Returns what it applied.
  */
 export function applyStoredTheme(
   key: string,
   storage: Pick<Storage, 'getItem'> | null,
-  prefersDark: boolean
+  prefersDark: boolean,
+  record: boolean
 ): ResolvedTheme {
   let picked: Theme = 'system'
   try {
@@ -51,8 +53,7 @@ export function applyStoredTheme(
   document
     .querySelector('meta[name="theme-color"]')
     ?.setAttribute('content', resolved === 'dark' ? '#191919' : '#ffffff')
-  const history = (window.__nxThemeHistory ??= [])
-  history.push(resolved)
+  if (record) (window.__nxThemeHistory ??= []).push(resolved)
   return resolved
 }
 
@@ -95,6 +96,6 @@ export const THEME_SCRIPT = [
   'var s=null,d=false;',
   'try{s=localStorage}catch(e){}',
   "try{d=window.matchMedia('(prefers-color-scheme: dark)').matches}catch(e){}",
-  `try{(${applyStoredTheme.toString()})(${JSON.stringify(THEME_KEY)},s,d)}catch(e){}`,
+  `try{(${applyStoredTheme.toString()})(${JSON.stringify(THEME_KEY)},s,d,${JSON.stringify(import.meta.env.DEV)})}catch(e){}`,
   '})()',
 ].join('')
