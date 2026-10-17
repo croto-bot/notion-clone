@@ -88,10 +88,10 @@ class Page(TimestampMixin, Base):
     )
     deleted_root: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("user.id", ondelete="SET NULL"), default=None
+        ForeignKey("user.id", ondelete="SET NULL"), default=None, index=True
     )
     last_edited_by_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("user.id", ondelete="SET NULL"), default=None
+        ForeignKey("user.id", ondelete="SET NULL"), default=None, index=True
     )
     last_edited_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(tz=UTC)
