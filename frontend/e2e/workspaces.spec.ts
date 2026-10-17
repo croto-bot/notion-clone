@@ -10,6 +10,7 @@ import {
   getMe,
   listMembers,
   listWorkspaces,
+  liveEventsSettled,
   loginUser,
   openWorkspaceMenu,
   PASSWORD,
@@ -369,6 +370,7 @@ test.describe('workspaces: refused changes in settings (coverage)', () => {
       const workspace = await ensureWorkspace(api, user)
       const guest = await registerUser(api, uniqueEmail('guest'), PASSWORD, 'Gus Guest')
       await addMember(api, user, workspace.id, guest)
+      const live = liveEventsSettled(page, workspace.id)
       await page.goto('/home')
       await sidebar(page).getByRole('button', { name: 'Settings' }).click()
       const settings = page.getByRole('dialog', { name: 'Settings' })
@@ -377,6 +379,7 @@ test.describe('workspaces: refused changes in settings (coverage)', () => {
       if (tab === 'Members') await expect(settings.getByText(guest.email)).toBeVisible()
       await prepare?.(page, workspace.name)
 
+      await live
       await revokeSession(api, user)
       await act(page, guest.displayName)
 
@@ -398,12 +401,14 @@ test.describe('workspaces: refused changes in settings (coverage)', () => {
     user,
   }) => {
     const workspace = await ensureWorkspace(api, user)
+    const live = liveEventsSettled(page, workspace.id)
     await page.goto('/home')
     await openWorkspaceMenu(page)
     await page.getByRole('button', { name: 'New workspace' }).click()
     const dialog = page.getByRole('dialog', { name: 'New workspace' })
     await dialog.getByLabel('Workspace name').fill('Never made')
 
+    await live
     await revokeSession(api, user)
     await dialog.getByRole('button', { name: 'Create workspace' }).click()
 

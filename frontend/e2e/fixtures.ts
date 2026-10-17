@@ -506,6 +506,23 @@ export function workspaceEventsPath(workspaceId: string): string {
   return `/workspaces/${workspaceId}/events`
 }
 
+/**
+ * Resolves once the page's workspace events socket is open and the reload it
+ * starts on open has finished. Call it before `page.goto`, and await it before
+ * a `revokeSession`: a reload that lands after the revoke gets a 401 and signs
+ * the page out before the action under test.
+ */
+export async function liveEventsSettled(page: Page, workspaceId: string): Promise<void> {
+  await page.waitForEvent('websocket', {
+    predicate: socket => new URL(socket.url()).pathname === workspaceEventsPath(workspaceId),
+  })
+  await page.waitForResponse(
+    response =>
+      response.request().method() === 'GET' && new URL(response.url()).pathname === '/workspaces'
+  )
+  await page.waitForLoadState('networkidle')
+}
+
 /** `GET /public/pages/{public_id}` (no session). */
 export async function getPublicPage(api: APIRequestContext, publicId: string): Promise<PublicPage> {
   const response = await api.get(`/public/pages/${publicId}`)

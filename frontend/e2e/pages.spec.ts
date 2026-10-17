@@ -13,6 +13,7 @@ import {
   getPage,
   getDocument,
   listComments,
+  liveEventsSettled,
   listFavorites,
   listMembers,
   listTrash,
@@ -1568,6 +1569,7 @@ test.describe('pages: sidebar tree, cover, trash and refused actions (coverage)'
       await createPage(api, user, { workspace_id: workspace.id, title: 'Other' })
       const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Target' })
       if (trashed) await trashPage(api, user, note.id)
+      const live = liveEventsSettled(page, workspace.id)
       await page.goto(`/p/${note.id}`)
       await expect(sidebarPage(page, 'Other')).toBeVisible()
       if (trashed) await expect(page.getByTestId('trash-banner')).toBeVisible()
@@ -1575,6 +1577,7 @@ test.describe('pages: sidebar tree, cover, trash and refused actions (coverage)'
       await expect(page.getByTestId('editor')).toBeVisible({ timeout: 15_000 })
       await prepare?.(page)
 
+      await live
       await revokeSession(api, user)
       await act(page)
 

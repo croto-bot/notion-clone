@@ -6,6 +6,7 @@ import {
   ensureWorkspace,
   errorToast,
   listComments,
+  liveEventsSettled,
   revokeSession,
 } from './fixtures'
 
@@ -135,6 +136,7 @@ test.describe('comments: keyboard and refused writes', () => {
       const workspace = await ensureWorkspace(api, user)
       const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Ended' })
       await createComment(api, user, note.id, { body: 'Still here' })
+      const live = liveEventsSettled(page, workspace.id)
       await page.goto(`/p/${note.id}`)
       await page.getByRole('button', { name: 'Comments', exact: true }).click()
       const thread = page
@@ -149,6 +151,7 @@ test.describe('comments: keyboard and refused writes', () => {
       }
 
       // Signed out on another device: the server refuses the next write.
+      await live
       await revokeSession(api, user)
       if (action === 'Delete comment') {
         await page.getByRole('menuitem', { name: 'Delete comment' }).click()
