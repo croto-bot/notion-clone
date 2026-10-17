@@ -30,6 +30,28 @@ import {
   updatePage,
 } from './fixtures'
 
+// The cover rule's case list, shared verbatim with the backend test
+// (backend/tests/e2e/test_databases.py, COVER_CASES): the picker's gate
+// (isRenderableCover) and the server's validator are one predicate and must
+// agree on every row. [value, accepted].
+const COVER_CASES: [value: string, accepted: boolean][] = [
+  ['gradient-1', true], // a picker preset key
+  ['https://cdn.example.com/bg.png', true],
+  ['HTTPS://cdn.example.com/bg.png', true], // both sides lowercase the scheme
+  ['https://cdn.example.com:8443/bg.png', true], // a port in range
+  ['https://cdn.example.com/bg image.png', true], // only the netloc must be whitespace-free
+  ['http://cdn.example.com/bg.png', false], // wrong scheme
+  ['javascript:alert(1)', false],
+  ['gradient-7', false], // not a preset key
+  ['https://', false], // no host
+  ['https:///x', false], // empty netloc
+  ['https:example.com', false], // no "//" after the scheme
+  ['https://not a url', false], // whitespace in the netloc
+  ['https://cdn.example.com:0/bg.png', false], // port 0 is not a port
+  ['https://cdn.example.com:99999/bg.png', false], // port out of range
+  ['https://cdn.example.com:abc/bg.png', false], // port not a number
+]
+
 test.describe('pages (F4, F8, F9, F11, F12)', () => {
   test('creates, renames, nests and duplicates a page', async ({ authedPage: page, api, user }) => {
     const workspace = await ensureWorkspace(api, user)
@@ -327,19 +349,9 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     await page.getByRole('dialog').getByRole('tab', { name: 'Link' }).click()
     const link = page.getByRole('dialog').getByLabel('Image link')
     const submit = page.getByRole('dialog').getByRole('button', { name: 'Submit' })
-    // Anything but an https image URL is refused (the backend 422s it too).
-    await link.fill('http://cdn.example.com/bg.png')
-    await expect(submit).toBeDisabled()
-    await link.fill('javascript:alert(1)')
-    await expect(submit).toBeDisabled()
-    // One rule on both sides of the wire: no host and not-a-URL hostnames
-    // are refused here exactly like the server refuses them (422).
-    await link.fill('https://')
-    await expect(submit).toBeDisabled()
-    await link.fill('https://not a url')
-    await expect(submit).toBeDisabled()
     // Both parsers lowercase the scheme: an uppercase https URL is a valid
-    // cover end to end, and the band renders it.
+    // cover end to end, and the band renders it. (The full accept/refuse
+    // table lives in the cover-rule test below.)
     await link.fill('HTTPS://cdn.example.com/bg.png')
     await expect(submit).toBeEnabled()
     await submit.click()
@@ -360,6 +372,40 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     await page.getByRole('dialog').getByRole('button', { name: 'Remove', exact: true }).click()
     await expect(page.getByTestId('page-cover')).toBeHidden()
     await expect.poll(async () => (await getPage(api, user, note.id)).cover).toBeNull()
+  })
+
+  test('applies one cover rule on both sides of the wire', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    // Every row of COVER_CASES must get the same verdict from the picker's
+    // gate (isRenderableCover) and from the server's validator: the picker
+    // never offers a submit the server would 422.
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Cover rule' })
+    await page.goto(`/p/${note.id}`)
+    await page.getByRole('button', { name: 'Add cover' }).click()
+    await page.getByRole('dialog').getByRole('tab', { name: 'Link' }).click()
+    const link = page.getByRole('dialog').getByLabel('Image link')
+    const submit = page.getByRole('dialog').getByRole('button', { name: 'Submit' })
+    for (const [value, accepted] of COVER_CASES) {
+      await link.fill(value)
+      if (accepted) await expect(submit, value).toBeEnabled()
+      else await expect(submit, value).toBeDisabled()
+    }
+
+    // A row with a port goes end to end: stored unchanged by the server and
+    // rendered as the band, including on the public page (whose band follows
+    // the same renderable predicate).
+    const withPort = 'https://cdn.example.com:8443/bg.png'
+    await link.fill(withPort)
+    await submit.click()
+    await expect(page.getByTestId('page-cover')).toBeVisible()
+    await expect.poll(async () => (await getPage(api, user, note.id)).cover).toBe(withPort)
+    const published = await updatePage(api, user, note.id, { is_public: true })
+    await page.goto(`/share/${published.public_id}`)
+    await expect(page.getByTestId('page-cover')).toBeVisible()
   })
 
   test('undoes a delete from the toast', async ({ authedPage: page, api, user }) => {

@@ -246,7 +246,10 @@ export function PageHeader({ page, editable }: PageHeaderProps) {
   const [iconOpen, setIconOpen] = useState(false)
   const [composing, setComposing] = useState(false)
   const canCover = editable
-  const hasCover = !!page.cover
+  // The band renders only a renderable cover; the icon strip's overlap must
+  // follow the same predicate, or a non-renderable value (from before the
+  // rule) would push the icon up over nothing.
+  const hasCover = isRenderableCover(page.cover)
 
   const addIcon = async () => {
     const emoji = await randomEmoji()

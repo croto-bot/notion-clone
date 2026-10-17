@@ -237,42 +237,54 @@ def test_page_options_can_be_updated(auth_client: httpx.Client) -> None:
     assert updated["last_edited_by"]["id"] == updated["created_by"]["id"]
 
 
+#: The cover rule's case list, shared verbatim with the Playwright check in
+#: frontend/e2e/pages.spec.ts ("applies one cover rule on both sides of the
+#: wire"): the server's validator and the client's isRenderableCover must
+#: agree on every row. (value, accepted).
+COVER_CASES: list[tuple[str, bool]] = [
+    ("gradient-1", True),  # a picker preset key
+    ("https://cdn.example.com/bg.png", True),
+    ("HTTPS://cdn.example.com/bg.png", True),  # both sides lowercase the scheme
+    ("https://cdn.example.com:8443/bg.png", True),  # a port in range
+    (
+        "https://cdn.example.com/bg image.png",
+        True,
+    ),  # only the netloc must be whitespace-free
+    ("http://cdn.example.com/bg.png", False),  # wrong scheme
+    ("javascript:alert(1)", False),
+    ("gradient-7", False),  # not a preset key
+    ("https://", False),  # no host
+    ("https:///x", False),  # empty netloc
+    ("https:example.com", False),  # no "//" after the scheme
+    ("https://not a url", False),  # whitespace in the netloc
+    ("https://cdn.example.com:0/bg.png", False),  # port 0 is not a port
+    ("https://cdn.example.com:99999/bg.png", False),  # port out of range
+    ("https://cdn.example.com:abc/bg.png", False),  # port not a number
+]
+
+
 def test_cover_must_be_a_preset_or_an_https_url(auth_client: httpx.Client) -> None:
     """The cover lands in a CSS background: only the picker's preset keys and
-    URLs that parse with scheme https and a non-empty host are accepted (422
-    otherwise), so no other scheme or arbitrary string ships into the page.
-    Both parsers lowercase the scheme, so "HTTPS://" is accepted like the
-    client's new URL() accepts it."""
+    the https URLs of COVER_CASES are accepted (422 otherwise), so no other
+    scheme or arbitrary string ships into the page background. The same table
+    drives the client's picker check in frontend/e2e/pages.spec.ts."""
     workspace = create_workspace(auth_client)
     page = create_page(auth_client, workspace["id"])
 
-    for bad in (
-        "http://cdn.example.com/bg.png",
-        "javascript:alert(1)",
-        "gradient-7",
-        "https://",  # a scheme alone is not a URL: no host
-        "https://not a url",  # a hostname with whitespace is not a URL
-    ):
-        body = assert_error(
-            auth_client.patch(f"/pages/{page['id']}", json={"cover": bad}),
-            422,
-            "validation_error",
-        )
-        assert [issue["loc"] for issue in body["detail"]] == [["body", "cover"]]
+    stored: str | None = None
+    for value, accepted in COVER_CASES:
+        response = auth_client.patch(f"/pages/{page['id']}", json={"cover": value})
+        if not accepted:
+            body = assert_error(response, 422, "validation_error")
+            assert [issue["loc"] for issue in body["detail"]] == [["body", "cover"]]
+            continue
+        assert response.status_code == 200, (value, response.text)
+        assert response.json()["cover"] == value
+        stored = value
 
+    # Only the accepted rows ever reached the row, and None clears the cover.
     kept = auth_client.get(f"/pages/{page['id']}").json()
-    assert kept["cover"] is None
-
-    upper = auth_client.patch(
-        f"/pages/{page['id']}", json={"cover": "HTTPS://cdn.example.com/bg.png"}
-    )
-    assert upper.status_code == 200
-    assert upper.json()["cover"] == "HTTPS://cdn.example.com/bg.png"
-
-    for good in ("gradient-1", "https://cdn.example.com/bg.png"):
-        saved = auth_client.patch(f"/pages/{page['id']}", json={"cover": good}).json()
-        assert saved["cover"] == good
-
+    assert kept["cover"] == stored
     cleared = auth_client.patch(f"/pages/{page['id']}", json={"cover": None}).json()
     assert cleared["cover"] is None
 

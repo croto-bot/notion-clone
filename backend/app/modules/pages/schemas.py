@@ -118,19 +118,23 @@ class PageUpdate(BaseModel):
     @field_validator("cover")
     @classmethod
     def cover_is_a_preset_or_an_https_url(cls, value: str | None) -> str | None:
-        # One rule with the client's check: a preset key, or a URL that parses
-        # with scheme exactly https and a non-empty, whitespace-free host
-        # (both parsers lowercase the scheme, so "HTTPS://" passes on both
-        # sides; "https://" has no host; Chromium would percent-encode the
-        # space in "https://not a url" into a broken hostname, so the client
-        # checks the raw host part and the server refuses the whitespace).
+        # One rule with the client's check (frontend/src/lib/colors.ts
+        # `isRenderableCover`; the shared case list lives in
+        # tests/e2e/test_databases.py and frontend/e2e/pages.spec.ts): a preset
+        # key, or a URL whose raw value starts with "https://" (either case,
+        # so "https:example.com" and "https:///x" are out), whose netloc has
+        # no whitespace, whose host is non-empty and whose port, if any, is
+        # 1..65535. A bad port makes `parsed.port` raise, which pydantic
+        # reports as this field's 422 like the branch below.
         if value is None or value in COVER_PRESET_KEYS:
             return value
         parsed = urlparse(value)
         if (
-            parsed.scheme == "https"
+            value.lower().startswith("https://")
+            and parsed.scheme == "https"
             and parsed.hostname
-            and not any(char.isspace() for char in parsed.hostname)
+            and not any(char.isspace() for char in parsed.netloc)
+            and (parsed.port is None or 1 <= parsed.port <= 65535)
         ):
             return value
         raise ValueError("cover must be a preset key or an https URL")

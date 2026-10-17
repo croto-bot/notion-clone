@@ -67,23 +67,33 @@ export const COVER_PRESETS = [
   { key: 'color-purple', label: 'Purple', css: '#6940a5' },
 ] as const
 
-/** One rule, both sides of the wire: a cover is a preset key, or a URL that
- * parses with scheme exactly https and a non-empty host — the same check the
- * backend runs with urllib.parse. Both parsers lowercase the scheme, so
- * `HTTPS://` is accepted; `https://` (no host) and `https://not a url` are
- * not URLs on either side. */
+/** One rule, both sides of the wire: a cover is a preset key, or a URL
+ * whose raw value starts with `https://` (either case, so `https:example.com`
+ * and `https:///x` are out), whose netloc carries no whitespace, whose host
+ * is non-empty and whose port, if any, is 1..65535 — the same checks the
+ * backend runs with urllib.parse (`PageUpdate.cover_is_a_preset_or_an_https_url`).
+ * The shared case list lives in backend/tests/e2e/test_databases.py and
+ * frontend/e2e/pages.spec.ts. */
 export function isRenderableCover(cover: string | null | undefined): boolean {
   if (!cover) return false
   if (COVER_PRESETS.some(item => item.key === cover)) return true
-  // The host part of the raw value must be whitespace-free: Chromium would
-  // percent-encode a space into the parsed hostname ("not%20a%20url"), so the
-  // check runs on the input, matching the server's hostname rule.
-  const afterScheme = cover.slice(cover.indexOf('://') + 3)
-  const host = afterScheme.split(/[/?#]/)[0]
-  if (/\s/.test(host)) return false
+  if (!/^https:\/\//i.test(cover)) return false
+  // The netloc runs from after "https://" to the first /, ? or #; it must
+  // be non-empty and whitespace-free. The URL parser alone would accept
+  // "https:///x" (WHATWG skips the extra slash and reads host "x"), so the
+  // emptiness has to be checked on the raw value, like the server does.
+  const netloc = cover.slice(8).split(/[/?#]/)[0]
+  if (netloc === '' || /\s/.test(netloc)) return false
   try {
     const url = new URL(cover)
-    return url.protocol === 'https:' && url.hostname !== ''
+    // A port out of range makes the URL constructor throw; 0 parses, so the
+    // range check still runs here.
+    const port = url.port === '' ? null : Number(url.port)
+    return (
+      url.protocol === 'https:' &&
+      url.hostname !== '' &&
+      (port === null || (port >= 1 && port <= 65535))
+    )
   } catch {
     return false
   }

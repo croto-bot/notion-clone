@@ -7,7 +7,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { usePublicPage } from '@/hooks/usePublicPage'
 import type { PageLinkResolver } from '@/features/editor/page-link-context'
 import { pageLabel } from '@/features/pages/page-tree'
-import { coverBackground } from '@/lib/colors'
+import { coverBackground, isRenderableCover } from '@/lib/colors'
 import { cn } from '@/lib/utils'
 import type { PublicPage } from '@/types/public-page'
 
@@ -105,6 +105,11 @@ function SharePage() {
     'mx-auto w-full px-6 md:px-24',
     page.full_width ? 'max-w-none' : 'max-w-[900px]'
   )
+  // The band and the icon strip's overlap follow the same predicate as the
+  // editor's cover: a value that cannot render (from before the rule) shows
+  // neither a band nor the overlap.
+  const cover = isRenderableCover(page.cover) ? page.cover : null
+  const hasCover = cover !== null
   return (
     <div
       className={cn(
@@ -114,20 +119,20 @@ function SharePage() {
       )}
     >
       <ShareHeader title={pageLabel(page)} />
-      {page.cover && (
+      {cover && (
         <div
           data-testid="page-cover"
           className="h-[30vh] max-h-[280px] min-h-[160px] w-full"
-          style={coverBackground(page.cover, page.cover_position)}
+          style={coverBackground(cover, page.cover_position)}
         />
       )}
       <div className={column}>
         {page.icon ? (
-          <div className={cn('relative z-10 h-[78px]', page.cover ? '-mt-[39px]' : 'mt-[56px]')}>
+          <div className={cn('relative z-10 h-[78px]', hasCover ? '-mt-[39px]' : 'mt-[56px]')}>
             <PageIcon icon={page.icon} size={78} className="!text-[66px]" />
           </div>
         ) : (
-          <div className={page.cover ? 'h-[24px]' : 'h-[72px]'} />
+          <div className={hasCover ? 'h-[24px]' : 'h-[72px]'} />
         )}
         <h1 className="mt-4 text-[40px] leading-[1.2] font-bold tracking-[-0.01em] break-words">
           {page.title.trim() ? page.title : 'Untitled'}
