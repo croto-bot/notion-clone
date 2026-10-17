@@ -7,6 +7,7 @@ import {
   deleteWorkspace,
   ensureWorkspace,
   errorToast,
+  getMe,
   listMembers,
   listWorkspaces,
   openWorkspaceMenu,
@@ -213,8 +214,6 @@ test.describe('workspaces (F2, F3, F17)', () => {
     await expect(name).toHaveValue('Ada')
     await name.fill('Ada Lovelace')
     await name.press('Enter')
-    expect((await updateMe(api, user, { display_name: 'Ada Lovelace' })).display_name).toBe(
-      'Ada Lovelace'
-    )
+    await expect.poll(async () => (await getMe(api, user)).display_name).toBe('Ada Lovelace')
   })
 })

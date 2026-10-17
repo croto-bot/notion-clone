@@ -5,7 +5,6 @@ import {
   addMember,
   authHeaders,
   createPage,
-  duplicatePage,
   ensureWorkspace,
   favoritePage,
   FRONTEND_URL,
@@ -67,7 +66,12 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
           (await pageTree(api, user, workspace.id)).filter(item => item.title === 'Child').length
       )
       .toBeGreaterThan(1)
-    expect((await duplicatePage(api, user, child.id)).title).toBe('Child')
+    // The duplicate the menu created, verified by reading it back.
+    const copy = (await pageTree(api, user, workspace.id)).find(
+      item => item.title === 'Child' && item.id !== child.id
+    )
+    expect(copy).toBeTruthy()
+    expect((await getPage(api, user, copy!.id)).title).toBe('Child')
   })
 
   test('moves a page from the Move to dialog', async ({ authedPage: page, api, user }) => {

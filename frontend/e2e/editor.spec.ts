@@ -2,9 +2,7 @@ import {
   test,
   expect,
   addMember,
-  createComment,
   createPage,
-  deleteComment,
   ensureWorkspace,
   FRONTEND_URL,
   getDocument,
@@ -16,7 +14,6 @@ import {
   sidebarPage,
   trashPage,
   uniqueEmail,
-  updateComment,
   updateMe,
   updatePage,
   workspaceEventsPath,
@@ -545,11 +542,9 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
       .click()
     await page.getByRole('menuitem', { name: 'Delete comment' }).click()
     await expect(resolved).toBeHidden()
-    const seeded = await createComment(api, user, note.id, { body: 'Seed' })
-    expect((await updateComment(api, user, seeded.id, { body: 'Edited seed' })).body).toBe(
-      'Edited seed'
-    )
-    await deleteComment(api, user, seeded.id)
-    expect((await listComments(api, user, note.id)).map(item => item.body)).not.toContain('Seed')
+    // The UI delete removed the whole discussion server-side (replies cascade).
+    await expect
+      .poll(async () => (await listComments(api, user, note.id)).map(item => item.body))
+      .toEqual([])
   })
 })
