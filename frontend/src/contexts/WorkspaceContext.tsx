@@ -58,8 +58,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     // Exactly one attempt: a failed create stops here (the Try again button
     // below re-arms it) instead of retrying on every re-render of this provider.
     creating.current = true
+    // The cap is by code points: the server takes up to 100 characters, and a
+    // UTF-16 slice could cut an emoji in half, producing a string the database
+    // rejects outright.
+    const name = Array.from(`${displayNameOf(me)}'s Notion`)
+      .slice(0, 100)
+      .join('')
     createWorkspace.mutate(
-      { name: `${displayNameOf(me)}'s Notion`.slice(0, 100) },
+      { name },
       {
         onSuccess: workspace => setSelectedId(workspace.id),
         onError: err => {

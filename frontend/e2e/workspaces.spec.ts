@@ -6,7 +6,6 @@ import {
   createWorkspace,
   deleteWorkspace,
   ensureWorkspace,
-  errorToast,
   getMe,
   listMembers,
   listWorkspaces,
@@ -20,36 +19,33 @@ import {
 } from './fixtures'
 
 test.describe('workspaces (F2, F3, F17)', () => {
-  test('caps the first-workspace bootstrap and offers Try again', async ({ loginAs, api }) => {
-    // A display name of exactly 100 UTF-16 units ending in an emoji: the
-    // bootstrap name ("<name>'s Notion", sliced to 100 units) cuts the emoji
-    // in half, and the database rejects the lone surrogate, so the create
-    // fails on the server for real (HTTP 500) on every attempt.
+  test('caps the first-workspace bootstrap name by code points', async ({ loginAs, api }) => {
+    // 99 A's plus 🚀 is 100 code points but 101 UTF-16 units: slicing the
+    // derived name ("<name>'s Notion") to 100 units cut the emoji in half,
+    // and the database rejected the lone surrogate, stranding the account on
+    // the bootstrap error screen forever. Truncating by code points keeps
+    // the string valid: the first 100 code points of the derived name are
+    // exactly the display name, and the account boots straight in.
     const longName = `${'A'.repeat(99)}🚀`
     const user = await registerUser(api, uniqueEmail('names'), PASSWORD, longName)
     const page = await loginAs(user)
 
+    // Count the create attempts straight off the wire: exactly one per boot,
+    // win or lose. This is the retry-cap contract (a failed create must not
+    // loop with a toast each time), asserted on the requests themselves.
+    const creates: string[] = []
+    page.on('request', request => {
+      if (request.method() === 'POST' && request.url().endsWith('/workspaces')) {
+        creates.push(request.url())
+      }
+    })
+
     await page.goto('/home')
-    const failure = page.getByText('Could not create your workspace').first()
-    const retry = page.getByRole('button', { name: 'Try again' })
-    await expect(retry).toBeVisible({ timeout: 20_000 })
-    await expect(failure).toBeVisible()
-    await expect(errorToast(page)).toHaveCount(1)
-
-    // Try again re-runs exactly one attempt: the same broken name fails again.
-    await retry.click()
-    await expect(retry).toBeVisible({ timeout: 20_000 })
-    await expect(errorToast(page)).toHaveCount(1, { timeout: 10_000 })
-
-    // A name the server accepts makes the next boot succeed end to end.
-    await updateMe(api, user, { display_name: 'Bo' })
-    await page.reload()
     await expect(
       page.getByRole('heading', { name: /Good (morning|afternoon|evening)/ })
     ).toBeVisible({ timeout: 20_000 })
-    expect((await listWorkspaces(api, user)).map(workspace => workspace.name)).toEqual([
-      "Bo's Notion",
-    ])
+    expect((await listWorkspaces(api, user)).map(workspace => workspace.name)).toEqual([longName])
+    expect(creates.length).toBe(1)
   })
 
   test('creates, renames and switches a workspace', async ({ authedPage: page, api, user }) => {
