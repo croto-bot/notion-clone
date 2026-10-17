@@ -293,7 +293,13 @@ class PageRepository(SQLAlchemyRepository[Page]):
         content_text: str,
         last_edited_by_id: uuid.UUID | None,
         last_edited_at: datetime,
-    ) -> None:
+    ) -> Page | None:
+        """Write the document and return the row, or None if the page is gone.
+
+        A purge can commit between the caller's access read and this write.
+        The empty RETURNING is the only honest answer then: the caller
+        reports the page missing instead of a successful write to nothing.
+        """
         statement = (
             update(Page)
             .where(Page.id == page_id)
@@ -303,9 +309,11 @@ class PageRepository(SQLAlchemyRepository[Page]):
                 last_edited_by_id=last_edited_by_id,
                 last_edited_at=last_edited_at,
             )
+            .returning(Page)
         )
-        await self._session.execute(statement)
+        result = await self._session.execute(statement)
         await self._session.commit()
+        return result.scalar_one_or_none()
 
     async def stored_state(self, page_id: uuid.UUID) -> bytes | None:
         """The page's stored Yjs update (room creation reads it under the page lock)."""

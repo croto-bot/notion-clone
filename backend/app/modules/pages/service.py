@@ -784,13 +784,17 @@ class PageService(BaseService[Page]):
             existing = await self.current_state(page_id)
             merged = merge_updates(existing, state)
             content_text = extract_text(merged)
-            await self.repo.set_document(
+            updated = await self.repo.set_document(
                 page_id,
                 ydoc_state=merged,
                 content_text=content_text,
                 last_edited_by_id=user_id,
                 last_edited_at=datetime.now(tz=UTC),
             )
+            if updated is None:
+                # The page was purged after the access read: report it, and
+                # do not push the write into the room of a deleted page.
+                raise NotFoundError(detail=f"Page {page_id} not found")
             self.collab_server.note_write(page_id, user_id)
             self.collab_server.apply_external_update(page_id, state)
         self._publish(
