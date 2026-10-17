@@ -66,7 +66,8 @@ Always: `request_id` (new UUID per request), `method`, `path`, `status_code`,
 `version`, `commit_hash`, `instance_id`.
 
 When set: `trace_id` (`X-Trace-Id` header, else `X-Request-ID`), `user_id`,
-`email`, `path_template` (e.g. `/items/{item_id}`, only when it differs from
+`email`, `session_id`, `client_id` (a UUID `X-Client-Id`; other values are
+dropped), `path_template` (e.g. `/items/{item_id}`, only when it differs from
 `path`), `query_string`, `entity_type`, `entity_id` / `entity_ids`, `action`,
 `custom`, `error`, `error_type`, `error_message`.
 

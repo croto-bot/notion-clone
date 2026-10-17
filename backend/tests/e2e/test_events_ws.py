@@ -5,14 +5,18 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from pycrdt import XmlElement, XmlFragment, XmlText
 from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
 from tests.e2e.helpers import (
     create_page,
     create_workspace,
+    doc_with_text,
     make_member,
     ws_close_code,
+    yjs_send_update,
+    yjs_sync,
 )
 
 if TYPE_CHECKING:
@@ -148,33 +152,88 @@ def test_every_member_receives_events(
 def test_events_carry_the_mutating_tab_client_id(
     server: LiveServer, auth_client: httpx.Client
 ) -> None:
-    """`X-Client-Id` is echoed as `client_id`, so a tab can skip its own events."""
+    """A UUID `X-Client-Id` is echoed as `client_id`. Anything else is dropped."""
     workspace = create_workspace(auth_client)
     page = create_page(auth_client, workspace["id"])
     url = _events_url(server, workspace["id"], _token_of(auth_client))
+    tab = "11111111-1111-4111-8111-111111111111"
 
     with connect(url, open_timeout=5) as socket:
         auth_client.patch(
             f"/pages/{page['id']}",
             json={"title": "From a tab"},
-            headers={"X-Client-Id": "tab-1"},
+            headers={"X-Client-Id": tab},
         )
         event = _next_event(socket)
         assert event["type"] == "page.updated"
-        assert event["client_id"] == "tab-1"
+        assert event["client_id"] == tab
 
         # No header (a client that predates it, or any script): no client_id.
         auth_client.patch(f"/pages/{page['id']}", json={"title": "From a script"})
         assert "client_id" not in _next_event(socket)
 
-        # An oversized id is dropped, not truncated: a truncated id could alias
-        # another tab's and silence its events for this one.
+        # Not a UUID: dropped, not truncated. A partial id could alias a tab.
         auth_client.patch(
             f"/pages/{page['id']}",
-            json={"title": "Long id"},
-            headers={"X-Client-Id": "x" * 65},
+            json={"title": "Not a uuid"},
+            headers={"X-Client-Id": "tab-1"},
         )
         assert "client_id" not in _next_event(socket)
+
+
+def test_collab_save_echoes_the_tab_client_id(
+    server: LiveServer, auth_client: httpx.Client
+) -> None:
+    """A document save publishes `page.updated` with the collab socket's tab id."""
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+    tab = "22222222-2222-4222-8222-222222222222"
+    events = _events_url(server, workspace["id"], _token_of(auth_client))
+    collab = (
+        f"{server.base_url.replace('http://', 'ws://')}"
+        f"/pages/{page['id']}/collab?token={_token_of(auth_client)}&client_id={tab}"
+    )
+
+    with connect(events, open_timeout=5) as socket:
+        with connect(collab, open_timeout=5) as conn:
+            doc, _ = doc_with_text()
+            yjs_sync(conn, doc)
+            fragment = doc.get("document-store", type=XmlFragment)
+            with doc.transaction():
+                fragment.children.append(
+                    XmlElement("p", contents=[XmlText("from collab")])
+                )
+            yjs_send_update(conn, doc)
+        event = _next_event(socket)
+
+    assert event["type"] == "page.updated"
+    assert event["page_id"] == page["id"]
+    assert event["client_id"] == tab
+
+
+def test_collab_save_drops_a_non_uuid_client_id(
+    server: LiveServer, auth_client: httpx.Client
+) -> None:
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+    events = _events_url(server, workspace["id"], _token_of(auth_client))
+    collab = (
+        f"{server.base_url.replace('http://', 'ws://')}"
+        f"/pages/{page['id']}/collab?token={_token_of(auth_client)}&client_id=not-a-uuid"
+    )
+
+    with connect(events, open_timeout=5) as socket:
+        with connect(collab, open_timeout=5) as conn:
+            doc, _ = doc_with_text()
+            yjs_sync(conn, doc)
+            fragment = doc.get("document-store", type=XmlFragment)
+            with doc.transaction():
+                fragment.children.append(XmlElement("p", contents=[XmlText("no tab")]))
+            yjs_send_update(conn, doc)
+        event = _next_event(socket)
+
+    assert event["type"] == "page.updated"
+    assert "client_id" not in event
 
 
 def test_bad_token_closes_4401(server: LiveServer, auth_client: httpx.Client) -> None:

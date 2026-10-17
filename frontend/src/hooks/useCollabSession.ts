@@ -4,6 +4,7 @@ import { WebsocketProvider } from 'y-websocket'
 import { useAuth } from '@/contexts/AuthContext'
 import { displayNameOf, useCurrentUser } from '@/hooks/useUser'
 import { API } from '@/lib/api-endpoints'
+import { clientId } from '@/lib/client-id'
 import { colorForUser } from '@/lib/colors'
 import { createValueStore } from '@/lib/value-store'
 import { WS_CLOSE_NOT_FOUND, WS_CLOSE_UNAUTHORIZED, wsBaseUrl } from '@/lib/ws'
@@ -97,9 +98,11 @@ export function useCollabSession(pageId: string): CollabSession | null {
     const identity = identityRef.current
     if (!token || !identity) return
     const doc = new Y.Doc()
-    // y-websocket joins `${serverUrl}/${roomName}?${params}`: this is `/pages/{id}/collab?token=…`.
+    // y-websocket joins `${serverUrl}/${roomName}?${params}`: this is
+    // `/pages/{id}/collab?token=…&client_id=…`. The save echoes `client_id`
+    // on `page.updated`, so typing does not refetch over an in-flight rename.
     const provider = new WebsocketProvider(wsBaseUrl(), API.WS.PAGE_COLLAB(pageId).slice(1), doc, {
-      params: { token },
+      params: { token, client_id: clientId },
     })
     provider.awareness.setLocalStateField('user', {
       id: identity.id,

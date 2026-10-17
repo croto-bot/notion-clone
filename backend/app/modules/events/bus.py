@@ -9,8 +9,8 @@ Payload contract (docs/SPEC.md §WebSockets)::
 
     {"type": "page.created", "page_id": "<uuid>", "actor_id": "<uuid>"}
 
-A change made through a request that identified its browser tab
-(``X-Client-Id``) also carries ``"client_id": "<tab id>"``.
+A change made by a tab that sent a UUID ``X-Client-Id`` (or a collab save
+that passed the same id) also carries ``"client_id": "<tab id>"``.
 """
 
 from __future__ import annotations
@@ -49,16 +49,23 @@ class WorkspaceEventBus:
             if not queues:
                 del self._subscribers[workspace_id]
 
-    def publish(self, workspace_id: uuid.UUID, event: dict[str, Any]) -> None:
+    def publish(
+        self,
+        workspace_id: uuid.UUID,
+        event: dict[str, Any],
+        *,
+        client_id: str | None = None,
+    ) -> None:
         """Deliver the event to every subscriber of the workspace, now.
 
-        A request that sent ``X-Client-Id`` gets it echoed onto the event as
-        ``client_id``: the tab that made the change skips the event (its own
-        mutation already refreshed its caches), every other client, including
-        the same user's other tabs, still refreshes.
+        ``client_id`` is the tab to echo. Callers that omit it use the current
+        request's id (a UUID ``X-Client-Id``). A collab save has no request
+        context, so it passes the socket's id. The client skips the event only
+        while that tab has a recent mutation of the page.
         """
-        if client_id := get_client_id():
-            event = {**event, "client_id": client_id}
+        tab = client_id if client_id is not None else get_client_id()
+        if tab:
+            event = {**event, "client_id": tab}
         for queue in list(self._subscribers.get(workspace_id, ())):
             try:
                 queue.put_nowait(event)

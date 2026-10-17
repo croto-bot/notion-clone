@@ -1,43 +1,34 @@
-"""The ``X-Client-Id`` request header: which browser tab made a request.
+"""Tab id echoed on workspace events.
 
-The frontend generates one id per tab (``src/lib/client-id.ts``) and sends it
-on every request. The middleware below stores it for the request's duration,
-and the workspace event bus echoes it onto the published event as
-``client_id``: a client can then tell its own events from everyone else's,
-including its user's other tabs (docs/SPEC.md §WebSockets).
+The frontend generates one UUID per browser tab. HTTP requests send it as
+``X-Client-Id``; the collab socket sends the same value as ``client_id``.
+The wide-event context holds the HTTP value for the request. A collab save
+is not an HTTP request, so it passes the socket's id into the event bus
+directly. A value that is not a UUID is dropped: a truncated or arbitrary
+string must not alias another tab.
 """
 
-from collections.abc import Awaitable, Callable
-from contextvars import ContextVar
+import re
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
+from app.core.logging.context import get_wide_event_context
 
 HEADER = "X-Client-Id"
 
-# The id is echoed to every member of the workspace, so bound it: the
-# frontend sends a 36-char UUID. Anything longer is dropped, not truncated
-# (a truncated id could alias another tab's).
-MAX_LENGTH = 64
+_UUID = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 
-_client_id: ContextVar[str | None] = ContextVar("client_id", default=None)
+
+def parse_client_id(value: str | None) -> str | None:
+    """Return ``value`` when it is a UUID, else None."""
+    if value and _UUID.fullmatch(value):
+        return value
+    return None
 
 
 def get_client_id() -> str | None:
-    """The id of the tab that made the current request, when it sent one."""
-    return _client_id.get()
-
-
-class ClientIdMiddleware(BaseHTTPMiddleware):
-    """Store the request's ``X-Client-Id`` for the code that publishes events."""
-
-    async def dispatch(
-        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
-    ) -> Response:
-        value = request.headers.get(HEADER)
-        token = _client_id.set(value if value and len(value) <= MAX_LENGTH else None)
-        try:
-            return await call_next(request)
-        finally:
-            _client_id.reset(token)
+    """The tab id of the current HTTP request, when it sent a UUID."""
+    ctx = get_wide_event_context()
+    if ctx is None:
+        return None
+    return ctx.client_id
