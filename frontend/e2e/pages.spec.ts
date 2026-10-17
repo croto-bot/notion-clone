@@ -101,6 +101,12 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
       .toContain(note.id)
     await page.getByRole('button', { name: 'Remove from Favorites' }).click()
     await expect(sidebar(page).getByRole('region', { name: 'Favorites' })).toBeHidden()
+    // The unstar's DELETE may still be in flight (the hidden region is the
+    // optimistic removal): wait for it to land before re-favoriting from the
+    // spec, or the DELETE can commit after the PUT and undo it.
+    await expect
+      .poll(async () => (await listFavorites(api, user, workspace.id)).map(item => item.id))
+      .toEqual([])
     await favoritePage(api, user, note.id)
     expect((await listFavorites(api, user, workspace.id)).map(item => item.id)).toContain(note.id)
   })
