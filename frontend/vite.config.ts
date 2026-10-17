@@ -50,7 +50,12 @@ const config = defineConfig({
   },
   // The e2e coverage report (E2E_COVERAGE=1) is written here during a run: a
   // reload of the open pages would break the tests.
-  server: { watch: { ignored: ['**/coverage/**'] } },
+  server: {
+    watch: { ignored: ['**/coverage/**'] },
+    // Compile the app's modules at startup, not on the first request: the first
+    // page that opens a database or a comment thread would wait for it.
+    warmup: { clientFiles: ['./src/**/*.{ts,tsx}'] },
+  },
   optimizeDeps: {
     // TanStack Start has no index.html, so Vite finds dependencies only when a
     // page first imports them, then re-bundles and reloads the page (and old
