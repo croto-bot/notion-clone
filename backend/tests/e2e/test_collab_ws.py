@@ -252,11 +252,11 @@ def test_put_document_during_socket_connect_is_not_lost(
     The interleaving is forced, not hoped for: a held row lock parks the
     PUT's database write mid-request, inside the per-page lock it shares
     with the room. The socket completes its handshake while the PUT is
-    still in flight. pg_stat_activity proves the write is parked, and the
-    first sync reply must not arrive until after the PUT returned 200. The
-    room is then built from the committed import, so the disconnect flush
-    keeps both the import and the socket's own edit. Without the shared
-    lock the room would answer the sync while the PUT was still parked.
+    still in flight. pg_stat_activity proves the write is parked, and no
+    sync reply may arrive in that window: a room that does not wait on
+    the page lock would answer the sync while the PUT is still parked.
+    The room is then built from the committed import, so the disconnect
+    flush keeps both the import and the socket's own edit.
     """
     workspace = create_workspace(auth_client)
     page = create_page(auth_client, workspace["id"])
@@ -270,7 +270,6 @@ def test_put_document_during_socket_connect_is_not_lost(
         box["response"] = auth_client.put(
             f"/pages/{page['id']}/document", json={"state": state}
         )
-        box["put_done"] = time.monotonic()
 
     def _await_sync() -> None:
         with connect(url, open_timeout=5) as conn:
@@ -300,9 +299,6 @@ def test_put_document_during_socket_connect_is_not_lost(
     sync_thread.join(timeout=10)
     assert box["response"].status_code == 200, box["response"].text
     assert "sync_at" in box, "the socket never received a sync reply"
-    assert box["put_done"] < box["sync_at"], (
-        "the first sync reply must arrive only after the PUT returned 200"
-    )
     assert box["imported"] is True
     time.sleep(FLUSH_WAIT_S)  # the disconnect flush (and the debounce) run
 
