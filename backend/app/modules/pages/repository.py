@@ -137,15 +137,22 @@ class PageRepository(SQLAlchemyRepository[Page]):
         return [row for (row,) in result.all()]
 
     async def ancestor_ids(self, page_id: uuid.UUID) -> list[uuid.UUID]:
-        """The parent chain of a page (the page itself excluded), cycle-safe."""
+        """The parent chain of a page (the page itself excluded), cycle-safe.
+
+        Nearest parent first: ``depth`` carries the chain order a plain
+        DISTINCT would scramble. The CYCLE clause stops a corrupt parent
+        loop, and the row that closes the loop is dropped from the result:
+        it repeats a parent already listed.
+        """
         statement = text(
-            "WITH RECURSIVE chain(id) AS ("
-            "SELECT parent_id FROM pages WHERE id = :page "
+            "WITH RECURSIVE chain(id, depth) AS ("
+            "SELECT parent_id, 0 FROM pages WHERE id = :page "
             "UNION ALL "
-            "SELECT p.parent_id FROM pages p "
+            "SELECT p.parent_id, c.depth + 1 FROM pages p "
             "JOIN chain c ON p.id = c.id WHERE c.id IS NOT NULL"
             ") CYCLE id SET is_cycle USING path "
-            "SELECT DISTINCT id FROM chain WHERE id IS NOT NULL"
+            "SELECT id FROM chain WHERE id IS NOT NULL AND NOT is_cycle "
+            "ORDER BY depth"
         )
         result = await self._session.execute(statement, {"page": page_id})
         return [row for (row,) in result.all()]

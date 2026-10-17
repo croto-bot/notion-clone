@@ -197,24 +197,20 @@ class PageService(BaseService[Page]):
         return chain
 
     async def _breadcrumbs(self, page: Page) -> list[Breadcrumb]:
-        """Parents, root first, from one cycle-safe id query and one get_many."""
+        """The parent chain, root first, from one ordered query and one get_many.
+
+        The ancestor query returns the parents nearest first and stops on a
+        parent cycle. Nothing here reads ``page.parent_id``, so a stale page
+        object cannot reorder or truncate the chain.
+        """
         ancestor_ids = await self.repo.ancestor_ids(page.id)
         if not ancestor_ids:
             return []
         nodes = {node.id: node for node in await self.repo.get_many(ancestor_ids)}
-        chain: list[Page] = []
-        seen: set[uuid.UUID] = set()
-        current_id = page.parent_id
-        while current_id is not None and current_id not in seen:
-            seen.add(current_id)
-            parent = nodes.get(current_id)
-            if parent is None:
-                break
-            chain.append(parent)
-            current_id = parent.parent_id
+        chain = [nodes[node_id] for node_id in reversed(ancestor_ids)]
         return [
             Breadcrumb(id=parent.id, title=parent.title, icon=parent.icon)
-            for parent in reversed(chain)
+            for parent in chain
         ]
 
     async def _has_children(self, page_id: uuid.UUID) -> bool:
