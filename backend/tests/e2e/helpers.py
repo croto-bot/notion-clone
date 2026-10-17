@@ -326,15 +326,16 @@ def ws_close_code(exc: Any) -> int:
 # --- y-websocket client protocol (built with pycrdt, like the server) ---------
 
 
-def yjs_sync(connection: Any, doc: Any) -> None:
+def yjs_sync(connection: Any, doc: Any, *, first: bytes | None = None) -> None:
     """Run the y-websocket initial sync against the room.
 
     Answers the server's sync step 1 with this doc's state, then asks for the
-    server's state (step 1 from us) and applies its step 2 reply.
+    server's state (step 1 from us) and applies its step 2 reply. ``first`` is
+    a step 1 already received, so a test can time that reply on its own.
     """
     from pycrdt import create_sync_message, handle_sync_message
 
-    step1 = connection.recv(timeout=WS_TIMEOUT_S)
+    step1 = first if first is not None else connection.recv(timeout=WS_TIMEOUT_S)
     assert isinstance(step1, bytes) and step1[0] == 0, step1  # SYNC
     reply = handle_sync_message(step1[1:], doc)
     if reply is not None:

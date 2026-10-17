@@ -250,13 +250,13 @@ def test_put_document_during_socket_connect_is_not_lost(
     """A PUT that commits exactly while a socket connects must win.
 
     The interleaving is forced, not hoped for: a held row lock parks the
-    PUT's database write mid-request (inside the per-page lock it shares
-    with the room), the socket completes its handshake while the PUT is
-    still in flight - pg_stat_activity proves the write is parked - and
-    only then is the lock released. The room must be built from the
-    committed import, so the disconnect flush keeps both the import and
-    the socket's own edit; without the shared lock the room would load the
-    pre-PUT bytes and the next flush would overwrite the import.
+    PUT's database write mid-request, inside the per-page lock it shares
+    with the room. The socket completes its handshake while the PUT is
+    still in flight. pg_stat_activity proves the write is parked, and the
+    first sync reply must not arrive until after the PUT returned 200. The
+    room is then built from the committed import, so the disconnect flush
+    keeps both the import and the socket's own edit. Without the shared
+    lock the room would answer the sync while the PUT was still parked.
     """
     workspace = create_workspace(auth_client)
     page = create_page(auth_client, workspace["id"])
@@ -264,32 +264,46 @@ def test_put_document_during_socket_connect_is_not_lost(
     _doc, update = doc_with_text("imported-via-put")
     state = base64.b64encode(update).decode()
     box: dict[str, Any] = {}
+    connected = threading.Event()
 
     def _put() -> None:
         box["response"] = auth_client.put(
             f"/pages/{page['id']}/document", json={"state": state}
         )
+        box["put_done"] = time.monotonic()
+
+    def _await_sync() -> None:
+        with connect(url, open_timeout=5) as conn:
+            connected.set()
+            first = conn.recv(timeout=8)
+            box["sync_at"] = time.monotonic()
+            doc, _ = doc_with_text()
+            yjs_sync(conn, doc, first=first)
+            box["imported"] = "imported-via-put" in _doc_text(doc)
+            _edit(doc, "typed-in-the-socket")
+            yjs_send_update(conn, doc)
+            yjs_wait_for(conn, doc, "typed-in-the-socket")
 
     with held_db_lock(
         db, "SELECT id FROM pages WHERE id = %s FOR UPDATE", (page["id"],)
     ):
-        thread = threading.Thread(target=_put)
-        thread.start()
+        put_thread = threading.Thread(target=_put)
+        put_thread.start()
         wait_for_blocked_queries(db, count=1, needle="UPDATE pages")
-        # Handshake done, room build queued behind the PUT's page lock.
-        socket_conn = connect(url, open_timeout=5)
-    # The row lock is gone: the PUT commits, then the room builds from the
-    # fresh stored bytes.
-    thread.join(timeout=10)
+        sync_thread = threading.Thread(target=_await_sync)
+        sync_thread.start()
+        assert connected.wait(timeout=5), "the socket handshake did not finish"
+        # A room that does not wait on the page lock answers sync here.
+        time.sleep(0.5)
+        assert "sync_at" not in box, "sync reply arrived while the PUT was parked"
+    put_thread.join(timeout=10)
+    sync_thread.join(timeout=10)
     assert box["response"].status_code == 200, box["response"].text
-
-    with socket_conn:
-        doc, _ = doc_with_text()
-        yjs_sync(socket_conn, doc)
-        assert "imported-via-put" in _doc_text(doc)  # the room kept the import
-        _edit(doc, "typed-in-the-socket")
-        yjs_send_update(socket_conn, doc)
-        yjs_wait_for(socket_conn, doc, "typed-in-the-socket")
+    assert "sync_at" in box, "the socket never received a sync reply"
+    assert box["put_done"] < box["sync_at"], (
+        "the first sync reply must arrive only after the PUT returned 200"
+    )
+    assert box["imported"] is True
     time.sleep(FLUSH_WAIT_S)  # the disconnect flush (and the debounce) run
 
     stored = auth_client.get(f"/pages/{page['id']}/document").json()
