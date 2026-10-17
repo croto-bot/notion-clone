@@ -27,13 +27,14 @@ import type { DatabaseProperty, DateValue, PropertyValue, SelectOption } from '@
 type Variant = 'cell' | 'panel'
 
 /**
- * The box of one value. Table cells keep Notion's 33 px minimum and grow with
- * wrapped content (multi-select chips, people); panel lines hug their row.
+ * The box of one value. Table cells take 32 px inside the row's 1 px border
+ * (33 px like Notion) and grow with wrapped content (multi-select chips,
+ * people); panel lines hug their row.
  */
 function cellBox(variant: Variant, ...className: ClassValue[]) {
   return cn(
     'flex w-full px-2 text-left text-[14px] leading-[20px]',
-    variant === 'panel' ? 'min-h-[32px] items-start py-1.5' : 'min-h-[33px] items-center py-[6px]',
+    variant === 'panel' ? 'min-h-[32px] items-start py-1.5' : 'min-h-[32px] items-center py-[6px]',
     className
   )
 }

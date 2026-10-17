@@ -42,7 +42,7 @@ function TitleCell({ row }: { row: RowLike }) {
   }
 
   return (
-    <div className="group/title flex min-h-[33px] items-center">
+    <div className="group/title flex min-h-[32px] items-center">
       <PageIcon icon={row.icon} size={18} className="ml-2 shrink-0" />
       {draft !== null ? (
         <input
@@ -67,7 +67,7 @@ function TitleCell({ row }: { row: RowLike }) {
           aria-label={`Title: ${label}`}
           disabled={!editable}
           onClick={() => setDraft(row.title)}
-          className="min-h-[33px] w-full min-w-0 flex-1 cursor-text px-1.5 text-left text-[14px] leading-[20px] font-medium disabled:cursor-default"
+          className="min-h-[32px] w-full min-w-0 flex-1 cursor-text px-1.5 text-left text-[14px] leading-[20px] font-medium disabled:cursor-default"
         >
           <span className={cn('block truncate', !row.title.trim() && 'text-subtle font-normal')}>
             {label}
