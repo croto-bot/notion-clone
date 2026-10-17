@@ -600,3 +600,13 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
       .toBe(`${FRONTEND_URL}/p/${note.id}`)
   })
 })
+
+test.describe('home (fix round 1)', () => {
+  test('shows an empty state for a new account, not a skeleton', async ({ authedPage: page }) => {
+    await page.goto('/home')
+
+    await expect(page.getByText('No recent pages yet')).toBeVisible()
+    const section = page.getByRole('region', { name: 'Recently visited' })
+    await expect(section.locator('.animate-pulse')).toHaveCount(0)
+  })
+})
