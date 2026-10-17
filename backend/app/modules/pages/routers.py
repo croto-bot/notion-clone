@@ -274,7 +274,7 @@ async def database_rows(
     """A database's rows (pages), by position, without breadcrumbs."""
     log_action("rows")
     log_entity("pages", page_id)
-    rows = await page_service.database_rows(page_id, user_id=user_id)
+    rows, role = await page_service.database_rows(page_id, user_id=user_id)
     return [
         PageResponse(
             **_summary(page).model_dump(),
@@ -293,7 +293,7 @@ async def database_rows(
             properties=dict(page.properties or {}),
             breadcrumbs=[],
             is_favorite=False,
-            role=await page_service.role_of_page(page, user_id),
+            role=role,
         )
         for page in rows
     ]

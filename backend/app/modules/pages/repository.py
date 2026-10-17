@@ -4,10 +4,12 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import asc, case, select, update
+from sqlalchemy import asc, case, delete, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.modules.pages.models import Page, PageFavorite, PageKind, PageVisit
+from app.modules.workspaces.models import WorkspaceMember, WorkspaceRole
+from app.repositories.exceptions import NotFoundError
 from app.repositories.sql_repository import SQLAlchemyRepository
 
 
@@ -35,7 +37,26 @@ class PageRepository(SQLAlchemyRepository[Page]):
         conditions = [Page.workspace_id == workspace_id, parent_clause]
         if not include_trashed:
             conditions.append(Page.deleted_at.is_(None))
-        statement = select(Page).where(*conditions).order_by(asc(Page.position))
+        statement = (
+            select(Page)
+            .where(*conditions)
+            .order_by(asc(Page.position))
+            .execution_options(populate_existing=True)
+        )
+        result = await self._session.execute(statement)
+        return list(result.scalars().all())
+
+    async def live_pages(self, workspace_id: uuid.UUID) -> list[Page]:
+        """Every non-trashed page of the workspace, database rows included.
+
+        One read for the features that need the whole live tree shape
+        (search breadcrumbs, has_children), instead of a query per parent hop.
+        """
+        statement = (
+            select(Page)
+            .where(Page.workspace_id == workspace_id, Page.deleted_at.is_(None))
+            .order_by(asc(Page.position), asc(Page.created_at))
+        )
         result = await self._session.execute(statement)
         return list(result.scalars().all())
 
@@ -99,19 +120,70 @@ class PageRepository(SQLAlchemyRepository[Page]):
         return list(result.scalars().all())
 
     async def subtree_ids(self, root_id: uuid.UUID) -> list[uuid.UUID]:
-        """The root and all its descendants, recursively."""
-        descendants = (
-            select(Page.id, Page.parent_id)
-            .where(Page.id == root_id)
-            .cte(name="subtree", recursive=True)
+        """The root and all its descendants, recursively.
+
+        The CYCLE clause (Postgres 14+) stops the walk on a parent cycle, so
+        one already-corrupt row cannot hang trash, restore, duplicate and move.
+        """
+        statement = text(
+            "WITH RECURSIVE subtree(id) AS ("
+            "SELECT id FROM pages WHERE id = :root "
+            "UNION ALL "
+            "SELECT p.id FROM pages p JOIN subtree s ON p.parent_id = s.id"
+            ") CYCLE id SET is_cycle USING path "
+            "SELECT DISTINCT id FROM subtree"
         )
-        parent = descendants.alias("subtree_parent")
-        descendants = descendants.union_all(
-            select(Page.id, Page.parent_id).join(parent, Page.parent_id == parent.c.id)
-        )
-        statement = select(descendants.c.id)
-        result = await self._session.execute(statement)
+        result = await self._session.execute(statement, {"root": root_id})
         return [row for (row,) in result.all()]
+
+    async def ancestor_ids(self, page_id: uuid.UUID) -> list[uuid.UUID]:
+        """The parent chain of a page (the page itself excluded), cycle-safe.
+
+        Nearest parent first: ``depth`` carries the chain order a plain
+        DISTINCT would scramble. The CYCLE clause stops a corrupt parent
+        loop, and the row that closes the loop is dropped from the result:
+        it repeats a parent already listed.
+        """
+        statement = text(
+            "WITH RECURSIVE chain(id, depth) AS ("
+            "SELECT parent_id, 0 FROM pages WHERE id = :page "
+            "UNION ALL "
+            "SELECT p.parent_id, c.depth + 1 FROM pages p "
+            "JOIN chain c ON p.id = c.id WHERE c.id IS NOT NULL"
+            ") CYCLE id SET is_cycle USING path "
+            "SELECT id FROM chain WHERE id IS NOT NULL AND NOT is_cycle "
+            "ORDER BY depth"
+        )
+        result = await self._session.execute(statement, {"page": page_id})
+        return [row for (row,) in result.all()]
+
+    async def lock_workspace_tree(self, workspace_id: uuid.UUID) -> None:
+        """Serialize this workspace's page-tree writes until commit or rollback.
+
+        ``pg_advisory_xact_lock`` is transaction-scoped. The caller's commit
+        or rollback releases it. Row locks cannot. A move's ancestor set is a
+        snapshot, a root move locks nothing, and trash, restore and purge lock
+        rows in a different order, so two writers deadlock or both pass a
+        cycle check. One lock per workspace, taken before the decision reads,
+        closes that. ``hashtextextended`` is the stable 64-bit key.
+        """
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:workspace_id, 0))"),
+            {"workspace_id": str(workspace_id)},
+        )
+
+    async def fresh(self, page_id: uuid.UUID) -> Page | None:
+        """The page as committed, refreshing any identity-mapped copy.
+
+        ``expire_on_commit`` is false, so a row loaded before the tree lock
+        would otherwise keep its pre-lock ``deleted_at`` and ``parent_id``.
+        """
+        statement = (
+            select(Page)
+            .where(Page.id == page_id)
+            .execution_options(populate_existing=True)
+        )
+        return (await self._session.execute(statement)).scalar_one_or_none()
 
     async def mark_trashed(
         self, page_ids: list[uuid.UUID], root_id: uuid.UUID, now: datetime
@@ -128,13 +200,29 @@ class PageRepository(SQLAlchemyRepository[Page]):
         await self._session.execute(statement)
         await self._session.commit()
 
-    async def restore_trashed(self, page_ids: list[uuid.UUID]) -> None:
-        statement = (
+    async def purge_subtree(
+        self, root_id: uuid.UUID, delete_ids: list[uuid.UUID]
+    ) -> None:
+        """Delete a trashed subtree and detach surviving trash roots, then commit.
+
+        The caller holds the workspace tree lock and has re-checked
+        ``deleted_at``, and ``delete_ids`` was computed after that lock.
+        Independent trash roots whose parent is among the deleted rows move
+        to the workspace root, still trashed. A nested root under a surviving
+        root keeps its parent and its subtree. The delete cascades through
+        the rest. One commit, so survivors are not detached while their old
+        parent still exists.
+        """
+        await self._session.execute(
             update(Page)
-            .where(Page.id.in_(page_ids), Page.deleted_at.is_not(None))
-            .values(deleted_at=None, deleted_root=False)
+            .where(
+                Page.id != root_id,
+                Page.deleted_root.is_(True),
+                Page.parent_id.in_(delete_ids),
+            )
+            .values(parent_id=None)
         )
-        await self._session.execute(statement)
+        await self._session.execute(delete(Page).where(Page.id == root_id))
         await self._session.commit()
 
     async def database_rows(self, database_id: uuid.UUID) -> list[Page]:
@@ -189,6 +277,7 @@ class PageRepository(SQLAlchemyRepository[Page]):
         result = await self._session.execute(statement)
         return list(result.scalars().all())
 
+    @SQLAlchemyRepository.translate_commit_errors
     async def insert_tree(self, rows: list[dict[str, Any]]) -> list[Page]:
         """Insert many pages in one transaction (duplicate subtree)."""
         statement = pg_insert(Page).values(rows).returning(Page)
@@ -204,7 +293,13 @@ class PageRepository(SQLAlchemyRepository[Page]):
         content_text: str,
         last_edited_by_id: uuid.UUID | None,
         last_edited_at: datetime,
-    ) -> None:
+    ) -> Page | None:
+        """Write the document and return the row, or None if the page is gone.
+
+        A purge can commit between the caller's access read and this write.
+        The empty RETURNING is the only honest answer then: the caller
+        reports the page missing instead of a successful write to nothing.
+        """
         statement = (
             update(Page)
             .where(Page.id == page_id)
@@ -214,20 +309,98 @@ class PageRepository(SQLAlchemyRepository[Page]):
                 last_edited_by_id=last_edited_by_id,
                 last_edited_at=last_edited_at,
             )
+            .returning(Page)
         )
-        await self._session.execute(statement)
+        result = await self._session.execute(statement)
         await self._session.commit()
+        return result.scalar_one_or_none()
+
+    async def stored_state(self, page_id: uuid.UUID) -> bytes | None:
+        """The page's stored Yjs update (room creation reads it under the page lock)."""
+        statement = select(Page.ydoc_state).where(Page.id == page_id)
+        result = await self._session.execute(statement)
+        return result.scalar_one_or_none()
+
+    async def write_access(
+        self, page_id: uuid.UUID, user_id: uuid.UUID
+    ) -> tuple[datetime | None, WorkspaceRole] | None:
+        """The page's deleted_at and the member's role, in one joined read.
+
+        This is what the collab socket's write guard checks on every push:
+        one query instead of a page read followed by a membership read.
+        None when the page is gone or the user is not a member.
+        """
+        statement = (
+            select(Page.deleted_at, WorkspaceMember.role)
+            .join(WorkspaceMember, WorkspaceMember.workspace_id == Page.workspace_id)
+            .where(Page.id == page_id, WorkspaceMember.user_id == user_id)
+        )
+        result = await self._session.execute(statement)
+        row = result.one_or_none()
+        return (row.deleted_at, row.role) if row is not None else None
 
     async def has_child(self, page_id: uuid.UUID) -> bool:
-        """Whether any page sits directly under this one."""
-        statement = select(Page.id).where(Page.parent_id == page_id).limit(1)
+        """Whether a live page sits directly under this one.
+
+        Trashed children do not count: the sidebar shows no expander for them
+        (GET /pages/{id} and search consume this; page-tree computes it from
+        its own live set).
+        """
+        statement = (
+            select(Page.id)
+            .where(Page.parent_id == page_id, Page.deleted_at.is_(None))
+            .limit(1)
+        )
         result = await self._session.execute(statement)
         return result.scalar_one_or_none() is not None
 
     async def get_many(self, page_ids: list[uuid.UUID]) -> list[Page]:
-        statement = select(Page).where(Page.id.in_(page_ids))
+        statement = (
+            select(Page)
+            .where(Page.id.in_(page_ids))
+            .execution_options(populate_existing=True)
+        )
         result = await self._session.execute(statement)
         return list(result.scalars().all())
+
+    @SQLAlchemyRepository.translate_commit_errors
+    async def restore_at(
+        self,
+        page_id: uuid.UUID,
+        *,
+        parent_id: uuid.UUID | None,
+        position: str,
+        clear_ids: list[uuid.UUID],
+    ) -> Page:
+        """Clear trash and write the live placement, then commit.
+
+        The restored page and the rest of its own trash set go live in one
+        transaction. A unique-sibling violation becomes ``duplicate_item``
+        (400) through the commit-error translation, never a raw 500.
+        """
+        if clear_ids:
+            await self._session.execute(
+                update(Page)
+                .where(Page.id.in_(clear_ids), Page.deleted_at.is_not(None))
+                .values(deleted_at=None, deleted_root=False)
+            )
+        statement = (
+            update(Page)
+            .where(Page.id == page_id)
+            .values(
+                parent_id=parent_id,
+                position=position,
+                deleted_at=None,
+                deleted_root=False,
+            )
+            .returning(Page)
+        )
+        result = await self._session.execute(statement)
+        await self._session.commit()
+        row = result.scalar_one_or_none()
+        if row is None:
+            raise NotFoundError(detail=f"Page {page_id} not found")
+        return row
 
 
 class PageFavoriteRepository(SQLAlchemyRepository[PageFavorite]):

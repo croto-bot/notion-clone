@@ -8,6 +8,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import psycopg
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
@@ -249,6 +251,79 @@ def _wait_until_server_connections_are_idle(db: Database) -> None:
         time.sleep(0.01)
 
 
+# --- Locks and latches the public API cannot create ---------------------------------
+#
+# Some race windows (a write that must commit while a request is mid-flight)
+# need the test to hold a database lock and release it at a chosen moment.
+# The locks run on their own connection in their own transaction, so they
+# stay held for the whole ``with`` block and vanish on exit.
+
+
+@contextmanager
+def held_db_lock(
+    db: Database, statement: str, params: tuple[Any, ...] = ()
+) -> Iterator[psycopg.Connection]:
+    """Run one locking statement and hold its transaction for the block.
+
+    e.g. ``with held_db_lock(db, "LOCK TABLE pages IN EXCLUSIVE MODE"):``
+    parks every write to ``pages`` behind the lock while reads keep going.
+    Yields the connection, so the test can act inside the same transaction
+    (its commit on exit is what releases the lock).
+    """
+    with psycopg.connect(db.url, autocommit=True) as conn:
+        # Session-level, so the locking statement below cannot wait forever.
+        conn.execute("SET lock_timeout = '10s'")
+        conn.autocommit = False
+        with conn.transaction():
+            conn.execute(statement, params)
+            yield conn
+
+
+def _blocked_queries(db: Database) -> list[str]:
+    """The last query text of every lock-blocked server backend."""
+    rows = db.fetch_all(
+        "SELECT query FROM pg_stat_activity "
+        "WHERE datname = current_database() AND pid <> pg_backend_pid() "
+        "AND backend_type = 'client backend' "
+        "AND wait_event_type = 'Lock'"
+    )
+    return [row[0] or "" for row in rows]
+
+
+def wait_until_blocked(
+    db: Database, predicate: Callable[[list[str]], bool], *, timeout: float = 10.0
+) -> None:
+    """Wait until ``predicate`` holds on the lock-blocked server backends.
+
+    The predicate sees each blocked backend's last query text ("INSERT INTO
+    pages", "FOR UPDATE", "pg_advisory_xact_lock"), so a test can prove
+    requests are parked inside a chosen window before it releases the lock.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        queries = _blocked_queries(db)
+        if predicate(queries):
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"parked queries never matched: {_blocked_queries(db)!r}")
+
+
+def wait_for_blocked_queries(
+    db: Database, *, count: int, needle: str, timeout: float = 10.0
+) -> None:
+    """Wait until ``count`` blocked backends are lock-blocked on ``needle``.
+
+    ``needle`` is matched inside the query text the blocked backend last ran
+    ("INSERT INTO pages", "FOR UPDATE", "UPDATE pages"), so a test can prove
+    a request is parked inside a chosen window before it releases the lock.
+    """
+    wait_until_blocked(
+        db,
+        lambda queries: sum(needle in query for query in queries) >= count,
+        timeout=timeout,
+    )
+
+
 # --- WebSocket helpers (the collab and events sockets) ------------------------
 
 
@@ -274,15 +349,16 @@ def ws_close_code(exc: Any) -> int:
 # --- y-websocket client protocol (built with pycrdt, like the server) ---------
 
 
-def yjs_sync(connection: Any, doc: Any) -> None:
+def yjs_sync(connection: Any, doc: Any, *, first: bytes | None = None) -> None:
     """Run the y-websocket initial sync against the room.
 
     Answers the server's sync step 1 with this doc's state, then asks for the
-    server's state (step 1 from us) and applies its step 2 reply.
+    server's state (step 1 from us) and applies its step 2 reply. ``first`` is
+    a step 1 already received, so a test can time that reply on its own.
     """
     from pycrdt import create_sync_message, handle_sync_message
 
-    step1 = connection.recv(timeout=WS_TIMEOUT_S)
+    step1 = first if first is not None else connection.recv(timeout=WS_TIMEOUT_S)
     assert isinstance(step1, bytes) and step1[0] == 0, step1  # SYNC
     reply = handle_sync_message(step1[1:], doc)
     if reply is not None:

@@ -17,6 +17,12 @@ Persistence (SPEC §WebSockets):
 - persisting also extracts the plain text of the ``document-store`` fragment
   into ``content_text`` and sets ``last_edited_*`` (to the user who most
   recently sent a document update).
+
+Concurrent writers are serialized by one lock per page, shared by room
+creation, ``PUT /pages/{id}/document`` and the flush: the room is always
+built from the newest stored state, the flush writes inside the lock, and
+the dirty flag is cleared only after a successful write (a change that
+arrives during the write marks the room dirty again).
 """
 
 from __future__ import annotations
@@ -39,6 +45,11 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 FLUSH_INTERVAL_S = 1.0
+# Bounded retries at shutdown: a dead database must not hang the process.
+SHUTDOWN_FLUSH_ROUNDS = 3
+# A beat between the shutdown rounds, so a failed flush is retried after
+# the pool or the database had a moment to come back, not in a tight loop.
+SHUTDOWN_FLUSH_GAP_S = 0.3
 
 
 def _session_factory() -> async_sessionmaker[AsyncSession]:
@@ -77,9 +88,10 @@ class CollabServer:
             exception_handler=exception_logger,
         )
         self._dirty: set[str] = set()
+        self._changes: dict[str, int] = {}
         self._writers: dict[str, uuid.UUID] = {}
         self._subscriptions: dict[str, Subscription] = {}
-        self._lock = asyncio.Lock()
+        self._locks: dict[str, asyncio.Lock] = {}
         self._starter: asyncio.Task[None] | None = None
         self._flusher: asyncio.Task[None] | None = None
 
@@ -97,8 +109,18 @@ class CollabServer:
         )
 
     async def stop(self) -> None:
-        """Persist everything, then stop the loops (app shutdown)."""
-        await self.flush_all()
+        """Persist everything (retrying until clean), then stop the loops."""
+        for _round in range(SHUTDOWN_FLUSH_ROUNDS):
+            if not self._dirty:
+                break
+            if _round:
+                await asyncio.sleep(SHUTDOWN_FLUSH_GAP_S)
+            await self.flush_all()
+        else:
+            logger.error(
+                "collab shutdown gives up on dirty pages: {pages}",
+                pages=sorted(self._dirty),
+            )
         if self._flusher is not None:
             self._flusher.cancel()
             await asyncio.gather(self._flusher, return_exceptions=True)
@@ -110,12 +132,25 @@ class CollabServer:
 
     # --- rooms ----------------------------------------------------------------
 
-    async def get_room(self, page_id: uuid.UUID, initial_state: bytes | None) -> YRoom:
-        """Return the page's room, creating it with the stored state."""
+    def page_lock(self, page_id: uuid.UUID) -> asyncio.Lock:
+        """The per-page lock shared by room creation, ``PUT /document`` and flush."""
+        if (lock := self._locks.get(str(page_id))) is None:
+            lock = self._locks[str(page_id)] = asyncio.Lock()
+        return lock
+
+    async def get_room(self, page_id: uuid.UUID) -> YRoom:
+        """Return the page's room, creating it with the stored state.
+
+        The stored ``ydoc_state`` is read inside the page lock, so a
+        ``PUT /pages/{id}/document`` that commits while the socket connects
+        (it holds the same lock) can never be overwritten by a room built
+        from older bytes.
+        """
         name = str(page_id)
-        async with self._lock:
+        async with self.page_lock(page_id):
             if room := self._server.rooms.get(name):
                 return room
+            initial_state = await self._stored_state(page_id)
             room = PageRoom(ready=False, exception_handler=exception_logger)
             if initial_state:
                 room.ydoc.apply_update(initial_state)
@@ -123,9 +158,15 @@ class CollabServer:
             self._server.rooms[name] = room
             await self._server.start_room(room)
             self._subscriptions[name] = room.ydoc.observe(
-                lambda _event, _name=name: self._dirty.add(_name)
+                lambda _event, _name=name: self._touch(_name)
             )
             return room
+
+    async def _stored_state(self, page_id: uuid.UUID) -> bytes | None:
+        from app.modules.pages.repository import PageRepository  # circular-safe
+
+        async with _session_factory()() as session:
+            return await PageRepository(session).stored_state(page_id)
 
     def room_state(self, page_id: uuid.UUID) -> bytes | None:
         """The live document state, or None when no room exists."""
@@ -150,6 +191,28 @@ class CollabServer:
         """Record the user who most recently sent a document update."""
         self._writers[str(page_id)] = user_id
 
+    async def may_write(self, page_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+        """Fresh write-access check for one incoming document push.
+
+        One joined read in its own short session (the connect-time check is
+        long gone by then). The page must be out of the trash and the member
+        must still have a write role, so a trash, demotion or removal after
+        connect takes effect from the client's next push.
+        """
+        from app.modules.pages.repository import PageRepository  # circular-safe
+        from app.modules.workspaces.models import WorkspaceRole
+
+        async with _session_factory()() as session:
+            access = await PageRepository(session).write_access(page_id, user_id)
+            if access is None:
+                return False
+            deleted_at, role = access
+            return deleted_at is None and role != WorkspaceRole.VIEWER
+
+    def _touch(self, name: str) -> None:
+        self._dirty.add(name)
+        self._changes[name] = self._changes.get(name, 0) + 1
+
     # --- persistence ----------------------------------------------------------
 
     async def _flush_loop(self) -> None:
@@ -170,29 +233,36 @@ class CollabServer:
                 )
 
     async def flush_page(self, page_id: uuid.UUID) -> None:
-        """Persist the room's document if it changed since the last flush."""
+        """Persist the room's document if it changed since the last flush.
+
+        The write runs inside the page lock and the dirty flag is cleared
+        only after it succeeds; a change that arrives during the write has
+        already marked the room dirty again, so the next flush keeps it.
+        """
         name = str(page_id)
         room = self._server.rooms.get(name)
         if room is None:
             return
-        async with self._lock:
-            if name not in self._dirty:
-                return
-            self._dirty.discard(name)
-            state = room.ydoc.get_update()
-            writer = self._writers.get(name)
-        content_text = extract_text(state)
         from app.modules.pages.repository import PageRepository  # circular-safe
 
-        async with _session_factory()() as session:
-            repo = PageRepository(session)
-            await repo.set_document(
-                page_id,
-                ydoc_state=state,
-                content_text=content_text,
-                last_edited_by_id=writer,
-                last_edited_at=datetime.now(tz=UTC),
-            )
+        async with self.page_lock(page_id):
+            if name not in self._dirty:
+                return
+            state = room.ydoc.get_update()
+            writer = self._writers.get(name)
+            seen_changes = self._changes.get(name, 0)
+            content_text = extract_text(state)
+            async with _session_factory()() as session:
+                repo = PageRepository(session)
+                await repo.set_document(
+                    page_id,
+                    ydoc_state=state,
+                    content_text=content_text,
+                    last_edited_by_id=writer,
+                    last_edited_at=datetime.now(tz=UTC),
+                )
+            if self._changes.get(name, 0) == seen_changes:
+                self._dirty.discard(name)
 
     def dirty_pages(self) -> set[str]:  # observability for logs
         return set(self._dirty)

@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING
 from tests.e2e.helpers import assert_error, create_page, create_workspace
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import httpx
+
+    from tests.e2e.helpers import RegisteredUser
 
 
 def test_new_database_gets_the_default_schema_and_a_table_view(
@@ -202,3 +206,20 @@ def test_cover_must_be_a_preset_or_an_https_url(auth_client: httpx.Client) -> No
 
     cleared = auth_client.patch(f"/pages/{page['id']}", json={"cover": None}).json()
     assert cleared["cover"] is None
+
+
+def test_rows_carry_the_callers_role(
+    auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
+) -> None:
+    """Every row reports the caller's role (read once, not one query per row)."""
+    from tests.e2e.helpers import make_member
+
+    workspace = create_workspace(auth_client)
+    database = create_page(auth_client, workspace["id"], title="Db", kind="database")
+    create_page(auth_client, workspace["id"], parent_id=database["id"], title="Row")
+    viewer = make_member(register_user, auth_client, workspace["id"], role="viewer")
+
+    rows = viewer.client.get(f"/pages/{database['id']}/rows").json()
+
+    assert len(rows) == 1
+    assert all(row["role"] == "viewer" for row in rows)
