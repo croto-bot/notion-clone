@@ -291,5 +291,5 @@ api-health: ## Check API health endpoint
 # ============================================================================
 
 demo-videos: ## Record the README videos (docs/media) on a throwaway stack (ports 57732, 57195, 57400)
-	bash scripts/demo/stack.sh up
-	node scripts/demo/record.ts $(SCENES); status=$$?; bash scripts/demo/stack.sh down; exit $$status
+	trap 'bash scripts/demo/stack.sh down' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM; \
+	bash scripts/demo/stack.sh up && node scripts/demo/record.ts $(SCENES)

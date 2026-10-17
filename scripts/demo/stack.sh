@@ -6,8 +6,10 @@
 #   frontend  a production build (`vite build`), served by Node, so no page waits for Vite
 #
 # Ports: DEMO_DB_PORT (57732), DEMO_BACKEND_PORT (57195), DEMO_FRONTEND_PORT (57400).
+# DEMO_DB_IMAGE overrides the Postgres image (default: the db image in docker-compose.yml).
 # `down` stops only what `up` started: the container by its name, the servers by
 # the PIDs kept in scripts/demo/.run/.
+# A failed `up` stops what it already started.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,17 +22,19 @@ FRONTEND_PORT="${DEMO_FRONTEND_PORT:-57400}"
 DB_CONTAINER=noted-demo-db
 BACKEND_URL="http://127.0.0.1:${BACKEND_PORT}"
 FRONTEND_URL="http://127.0.0.1:${FRONTEND_PORT}"
-DB_IMAGE="$(sed -n '/^  db:/,/image:/s/^ *image: *//p' "$root/docker-compose.yml")"
+DB_IMAGE="${DEMO_DB_IMAGE:-$(sed -n '/^  db:/,/image:/s/^ *image: *//p' "$root/docker-compose.yml")}"
 
 port_is_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 
+# Polls a command every 0.5 s for up to 2 minutes.
 wait_for() {
-  local url=$1 what=$2
+  local what=$1
+  shift
   for _ in $(seq 1 240); do
-    curl -fsS -o /dev/null "$url" 2>/dev/null && return 0
+    "$@" >/dev/null 2>&1 && return 0
     sleep 0.5
   done
-  echo "demo: $what did not answer on $url (log: $run_dir/$what.log)" >&2
+  echo "demo: $what was not ready after 2 minutes (logs: $run_dir/)" >&2
   exit 1
 }
 
@@ -50,13 +54,15 @@ up() {
     fi
   done
 
+  # From here on, a failed step stops whatever this run already started.
+  trap 'status=$?; [ "$status" -eq 0 ] || down; exit "$status"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   docker run --detach --rm --name "$DB_CONTAINER" \
     --env POSTGRES_USER=app --env POSTGRES_PASSWORD=app --env POSTGRES_DB=app \
     --publish "127.0.0.1:${DB_PORT}:5432" --tmpfs /var/lib/postgresql \
     "$DB_IMAGE" -c fsync=off -c synchronous_commit=off >/dev/null
-  until docker exec "$DB_CONTAINER" pg_isready --quiet --host 127.0.0.1 --username app --dbname app; do
-    sleep 0.5
-  done
+  wait_for db docker exec "$DB_CONTAINER" pg_isready --quiet --host 127.0.0.1 --username app --dbname app
   echo "demo: db ready on 127.0.0.1:${DB_PORT}"
 
   export DB_URL="postgresql://app:app@127.0.0.1:${DB_PORT}/app" FRONTEND_URL
@@ -64,14 +70,14 @@ up() {
   (cd "$root/backend" && uv run --frozen alembic upgrade head >"$run_dir/migrate.log" 2>&1)
   (cd "$root/backend" && start_server backend uv run --frozen uvicorn --no-access-log \
     --factory app.main:create_app --host 127.0.0.1 --port "$BACKEND_PORT")
-  wait_for "$BACKEND_URL/health" backend
+  wait_for backend curl -fsS --max-time 2 "$BACKEND_URL/health"
   echo "demo: backend ready on $BACKEND_URL"
 
   (cd "$root/frontend" && VITE_API_BASE_URL="$BACKEND_URL" ./node_modules/.bin/vite build \
     >"$run_dir/build.log" 2>&1)
   (cd "$root/frontend" && HOST=127.0.0.1 PORT="$FRONTEND_PORT" start_server frontend \
     node .output/server/index.mjs)
-  wait_for "$FRONTEND_URL" frontend
+  wait_for frontend curl -fsS --max-time 2 "$FRONTEND_URL"
   echo "demo: frontend ready on $FRONTEND_URL"
 }
 
