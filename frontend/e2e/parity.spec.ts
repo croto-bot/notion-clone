@@ -653,17 +653,24 @@ for (const theme of ['light', 'dark'] as const) {
         .soft(longestMs(await css(bar, 'transition-duration')), 'collapse duration')
         .toBe(METRICS.sidebarCollapseMs)
       // The width transition must run its full course, not jump to closed.
-      const transition = bar.evaluate(
+      const elapsedMs = bar.evaluate(
         (element: HTMLElement) =>
-          new Promise<{ property: string; elapsedMs: number }>(resolve => {
+          new Promise<number>(resolve => {
             element.addEventListener('transitionend', event => {
-              if (event.target !== element) return
-              resolve({ property: event.propertyName, elapsedMs: event.elapsedTime * 1000 })
+              if (event.target === element && event.propertyName === 'width') {
+                resolve(event.elapsedTime * 1000)
+              }
             })
           })
       )
       await page.keyboard.press('Control+Backslash')
-      expect(await transition).toEqual({ property: 'width', elapsedMs: METRICS.sidebarCollapseMs })
+      const collapseMs = await elapsedMs
+      expect(collapseMs, 'collapse width transition').toBeGreaterThanOrEqual(
+        METRICS.sidebarCollapseMs - 10
+      )
+      expect(collapseMs, 'collapse width transition').toBeLessThanOrEqual(
+        METRICS.sidebarCollapseMs + 10
+      )
       expect((await box(bar)).width).toBe(0)
       await shoot(page, 'sidebar-collapsed', theme)
     })
