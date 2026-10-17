@@ -12,10 +12,10 @@ import { randomEmoji } from '@/features/emoji/emoji-data'
 import { COVER_PRESETS, coverBackground, isRenderableCover } from '@/lib/colors'
 import { consumeTitleFocus } from '@/lib/title-focus'
 import { cn } from '@/lib/utils'
-import type { PageResponse } from '@/types/page'
+import type { PageKind, PageResponse } from '@/types/page'
 
 /** Docs stay in a 708 px column. Full width and databases keep the 96 px margin only. */
-export function pageColumnClass(page: { full_width?: boolean; kind?: string }) {
+export function pageColumnClass(page: { full_width: boolean; kind: PageKind }) {
   const wide = page.full_width || page.kind === 'database'
   return cn('mx-auto w-full px-6 md:px-24', wide ? 'max-w-none' : 'max-w-[900px]')
 }

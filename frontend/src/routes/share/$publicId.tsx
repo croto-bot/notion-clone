@@ -2,6 +2,7 @@ import { lazy, Suspense, useMemo } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { NotionLogo } from '@/components/NotionLogo'
 import { PageIcon } from '@/components/PageIcon'
+import { PageSkeleton } from '@/components/PageSkeleton'
 import { pageColumnClass } from '@/components/PageHeader'
 import { buttonVariants } from '@/components/ui/button'
 import { PRODUCT_NAME } from '@/lib/brand'
@@ -82,10 +83,7 @@ function SharePage() {
     return (
       <div className="bg-background min-h-screen">
         <ShareHeader title={PRODUCT_NAME} />
-        <div className="mx-auto w-full max-w-[900px] px-6 md:px-24" aria-hidden="true">
-          <div className="h-[72px]" />
-          <div className="bg-hover h-12 w-1/2 animate-pulse rounded-[4px]" />
-        </div>
+        <PageSkeleton />
       </div>
     )
   }

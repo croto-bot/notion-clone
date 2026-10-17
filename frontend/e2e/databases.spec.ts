@@ -429,3 +429,26 @@ test.describe('databases and publish (F13, F15)', () => {
     expect(publicDatabase.rows[0].last_edited_at).toBeTruthy()
   })
 })
+
+test.describe('databases: page options and table layout (fix round 1)', () => {
+  test('hides the full-width switch for databases', async ({ authedPage: page, api, user }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Wide board',
+    })
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Plain doc' })
+
+    await page.goto(`/p/${database.id}`)
+    await page.getByRole('button', { name: 'Page options' }).click()
+    // Databases always use the wide column, so the switch would do nothing.
+    await expect(page.getByRole('menuitemcheckbox', { name: 'Full width' })).toBeHidden()
+    await expect(page.getByRole('menuitemcheckbox', { name: 'Lock page' })).toBeVisible()
+    await page.keyboard.press('Escape')
+
+    await page.goto(`/p/${note.id}`)
+    await page.getByRole('button', { name: 'Page options' }).click()
+    await expect(page.getByRole('menuitemcheckbox', { name: 'Full width' })).toBeVisible()
+  })
+})
