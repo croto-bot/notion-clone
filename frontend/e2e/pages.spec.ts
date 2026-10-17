@@ -274,9 +274,259 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     const firstNewer = seen.indexOf('Fixed name')
     expect(firstNewer, `sidebar showed ${JSON.stringify(seen)}`).toBeGreaterThanOrEqual(0)
     expect(firstNewer, `sidebar showed ${JSON.stringify(seen)}`).toBeLessThan(settledAt)
-    for (let i = settledAt; i < seen.length; i++) {
+    // The whole tape, not only the post-settle window: once the newer title
+    // has appeared, an older one must not come back, including during the overlap.
+    for (let i = firstNewer; i < seen.length; i++) {
       expect(seen[i], `sidebar showed ${JSON.stringify(seen)}`).toBe('Fixed name')
     }
+  })
+
+  test('a refused title followed by a star returns to the server title with the star on', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Kept title' })
+    await page.goto(`/p/${note.id}`)
+    const title = page.getByLabel('Page title')
+    await expect(title).toHaveValue('Kept title', { timeout: 15_000 })
+    await expect(sidebarPage(page, 'Kept title')).toBeVisible()
+
+    // One turn: the 422 is still in flight when the star is clicked, so a
+    // favorite must not swallow the refused edit's repair.
+    await page.evaluate(() => {
+      const textarea = document.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="Page title"]'
+      )
+      const star = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Add to Favorites"]'
+      )
+      if (!textarea || !star) throw new Error('title or star not found')
+      const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+      setValue.call(textarea, 'X'.repeat(5000))
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+      star.click()
+    })
+
+    await expect(errorToast(page)).toHaveCount(1)
+    await expect(title).toHaveValue('Kept title')
+    await expect(page.getByTestId('breadcrumb-current')).toHaveText('Kept title')
+    await expect(sidebarPage(page, 'Kept title')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Remove from Favorites' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect((await getPage(api, user, note.id)).title).toBe('Kept title')
+    expect(await listFavorites(api, user, workspace.id)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: note.id })])
+    )
+  })
+
+  test('a font change stays visible when a star click overlaps the save', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, {
+      workspace_id: workspace.id,
+      title: 'Font then star',
+    })
+    await page.goto(`/p/${note.id}`)
+    await expect(page.getByTestId('page-scroll')).toBeVisible({ timeout: 15_000 })
+    await page.getByRole('button', { name: 'Page options' }).click()
+
+    await page.evaluate(() => {
+      const serif = document.querySelector<HTMLElement>('[aria-label="Serif"]')
+      const star = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Add to Favorites"]'
+      )
+      if (!serif || !star) throw new Error('font or star not found')
+      serif.click()
+      star.click()
+    })
+
+    await expect(page.getByTestId('page-scroll')).toHaveAttribute('data-font', 'serif')
+    // The options menu stays open (the font item keeps it open) and hides the
+    // topbar star from the accessibility tree. Close it, then read the star.
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('button', { name: 'Remove from Favorites' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    await expect.poll(async () => (await getPage(api, user, note.id)).font).toBe('serif')
+  })
+
+  test('a publish overlapped by a star still shows the public link', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, {
+      workspace_id: workspace.id,
+      title: 'Publish then star',
+    })
+    await page.goto(`/p/${note.id}`)
+    await expect(page.getByRole('button', { name: 'Share' })).toBeVisible({ timeout: 15_000 })
+    await page.getByRole('button', { name: 'Share' }).click()
+    await page.getByRole('tab', { name: 'Publish' }).click()
+
+    await page.evaluate(() => {
+      const publish = document.querySelector<HTMLButtonElement>('[aria-label="Publish to web"]')
+      const star = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Add to Favorites"]'
+      )
+      if (!publish || !star) throw new Error('publish or star not found')
+      publish.click()
+      star.click()
+    })
+
+    const link = page.getByLabel('Public link')
+    await expect(link).toBeVisible()
+    await expect(link).toHaveValue(/\/share\//)
+    await expect(page.getByRole('button', { name: 'Remove from Favorites' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    const saved = await getPage(api, user, note.id)
+    expect(saved.is_public).toBe(true)
+    expect(saved.public_id).toBeTruthy()
+    await expect(link).toHaveValue(new RegExp(`/share/${saved.public_id}$`))
+  })
+
+  test('moving a parent updates the open child breadcrumbs', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    await createPage(api, user, { workspace_id: workspace.id, title: 'Folder' })
+    const parent = await createPage(api, user, { workspace_id: workspace.id, title: 'Parent' })
+    const child = await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: parent.id,
+      title: 'Child',
+    })
+    await page.goto(`/p/${child.id}`)
+    const crumbs = page.getByRole('navigation', { name: 'Breadcrumbs' })
+    await expect(crumbs.getByRole('link', { name: 'Parent' })).toBeVisible({ timeout: 15_000 })
+    await expect(crumbs.getByRole('link', { name: 'Folder' })).toHaveCount(0)
+
+    await sidebarPage(page, 'Parent').hover()
+    await page.getByRole('button', { name: 'Options for Parent' }).click()
+    await page.getByRole('menuitem', { name: 'Move to' }).click()
+    await page.getByRole('option', { name: 'Folder' }).click()
+
+    await expect(crumbs.getByRole('link', { name: 'Folder' })).toBeVisible()
+    await expect(crumbs.getByRole('link', { name: 'Parent' })).toBeVisible()
+    expect((await getPage(api, user, parent.id)).parent_id).not.toBeNull()
+  })
+
+  test('typing then renaming within a second does not revert the title', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Quiet title' })
+    await page.goto(`/p/${note.id}`)
+    const editor = page.getByTestId('editor')
+    await expect(editor).toBeVisible({ timeout: 15_000 })
+    await expect(sidebar(page).locator(`[data-page-id="${note.id}"]`)).toBeVisible()
+
+    await page.evaluate(id => {
+      const row = document.querySelector(`[data-page-id="${id}"]`)
+      if (!row) throw new Error('sidebar row not found')
+      const label = () => row.querySelector('span.truncate')?.textContent ?? ''
+      const seen: string[] = [label()]
+      ;(window as typeof window & { __sidebarTitles: string[] }).__sidebarTitles = seen
+      new MutationObserver(() => {
+        const value = label()
+        if (value !== seen[seen.length - 1]) seen.push(value)
+      }).observe(row, { childList: true, characterData: true, subtree: true })
+    }, note.id)
+
+    await editor.click()
+    await page.keyboard.type('Hello document')
+    // Rename starts in the same second as the typing. The titles keep coming
+    // for longer than the collab flush (about 1s) plus the events coalesce, so
+    // the save's page.updated refetches while a newer title is on screen.
+    const titles = Array.from({ length: 50 }, (_, i) => `Renamed ${String(i + 1).padStart(2, '0')}`)
+    const finalTitle = titles[titles.length - 1]! as string
+    await page.evaluate(
+      ({ titles, gap }) => {
+        const textarea = document.querySelector<HTMLTextAreaElement>(
+          'textarea[aria-label="Page title"]'
+        )
+        if (!textarea) throw new Error('title input not found')
+        const setValue = Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          'value'
+        )!.set!
+        const type = (value: string) => {
+          setValue.call(textarea, value)
+          textarea.dispatchEvent(new Event('input', { bubbles: true }))
+        }
+        const enter = () =>
+          textarea.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+          )
+        return new Promise<void>(resolve => {
+          let index = 0
+          const step = () => {
+            if (index >= titles.length) {
+              resolve()
+              return
+            }
+            type(titles[index]!)
+            enter()
+            index += 1
+            setTimeout(step, gap)
+          }
+          step()
+        })
+      },
+      { titles, gap: 30 }
+    )
+
+    await expect(page.getByLabel('Page title')).toHaveValue(finalTitle)
+    await expect(sidebarPage(page, finalTitle)).toBeVisible()
+    await expect.poll(async () => (await getPage(api, user, note.id)).title).toBe(finalTitle)
+    await page.evaluate(
+      id =>
+        new Promise<void>(resolve => {
+          setTimeout(() => {
+            const row = document.querySelector(`[data-page-id="${id}"]`)
+            const state = window as typeof window & { __sidebarTitles?: string[] }
+            const value = row?.querySelector('span.truncate')?.textContent ?? ''
+            const seen = state.__sidebarTitles ?? []
+            if (value !== seen[seen.length - 1]) seen.push(value)
+            resolve()
+          }, 1500)
+        }),
+      note.id
+    )
+
+    const seen = await page.evaluate(
+      () => (window as typeof window & { __sidebarTitles?: string[] }).__sidebarTitles ?? []
+    )
+    const firstRename = seen.findIndex(title => title.startsWith('Renamed '))
+    expect(firstRename, `sidebar showed ${JSON.stringify(seen)}`).toBeGreaterThanOrEqual(0)
+    const rank = (title: string) => {
+      const match = /^Renamed (\d+)$/.exec(title)
+      return match ? Number(match[1]) : 0
+    }
+    for (let i = firstRename + 1; i < seen.length; i++) {
+      expect(rank(seen[i]!), `sidebar showed ${JSON.stringify(seen)}`).toBeGreaterThanOrEqual(
+        rank(seen[i - 1]!)
+      )
+    }
+    expect(seen[seen.length - 1], `sidebar showed ${JSON.stringify(seen)}`).toBe(finalTitle)
   })
 
   test('an edit burst never reverts the editing tab, and still reaches the other tab and another member', async ({
@@ -285,14 +535,11 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     user,
     loginAs,
   }) => {
-    // The last stale-refetch source: the events socket of the tab that makes
-    // a change used to invalidate that tab's own page detail and lists on the
-    // change's `page.updated` event; the refetch can read pre-commit state and
-    // land over the newer optimistic paint (the sidebar row briefly shows an
-    // older title, frame by frame below). Every request now carries this tab's
-    // `X-Client-Id`, the event echoes it, and the socket skips its own events.
-    // The same user's OTHER tab has its own id and still refreshes, and so
-    // does every other member.
+    // The events socket skips a `page.updated` only while this tab has a
+    // pending or just-settled mutation of that page. A refetch of an earlier
+    // commit would otherwise land over the newer optimistic paint. The same
+    // user's other tab has its own id and still refreshes, and so does every
+    // other member.
     const workspace = await ensureWorkspace(api, user)
     const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Multiplayer' })
     const otherUser = await registerUser(api)

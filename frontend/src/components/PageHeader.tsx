@@ -173,7 +173,12 @@ function PageTitle({
     const value = pending.current
     if (value === null) return
     pending.current = null
-    void updatePage(pageId, { title: value })
+    void updatePage(pageId, { title: value }).then(saved => {
+      // A refused title stays in the draft, so the header would keep showing
+      // it after the cache rolls back. A newer draft must not be cleared.
+      if (saved !== null) return
+      setDraft(current => (current === value ? null : current))
+    })
   }, [pageId, updatePage])
 
   // Always hold the latest flush; only leaving the page flushes here (the
