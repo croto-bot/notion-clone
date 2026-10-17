@@ -57,6 +57,7 @@ import type {
   UpdateWorkspaceData,
   Workspace,
 } from '../src/types/workspace'
+import { COVERAGE_ENABLED, addCoverage } from './support/coverage'
 import { BACKEND_URL, FRONTEND_URL } from './support/stack'
 
 export { expect }
@@ -622,6 +623,24 @@ function watchContext(context: BrowserContext): () => void {
   }
 }
 
+/**
+ * With E2E_COVERAGE=1, records the browser JS coverage of every page the
+ * context opens. Call the returned function before the context closes.
+ */
+function measureContext(context: BrowserContext): () => Promise<void> {
+  if (!COVERAGE_ENABLED) return async () => {}
+  const started: Promise<void>[] = []
+  context.on('page', page => {
+    started.push(page.coverage.startJSCoverage({ resetOnNavigation: false }))
+  })
+  return async () => {
+    await Promise.all(started)
+    for (const page of context.pages()) {
+      await addCoverage(await page.coverage.stopJSCoverage())
+    }
+  }
+}
+
 interface Fixtures {
   api: APIRequestContext
   user: TestUser
@@ -632,7 +651,9 @@ interface Fixtures {
 export const test = base.extend<Fixtures>({
   context: async ({ context }, use) => {
     const assertNoPageErrors = watchContext(context)
+    const saveCoverage = measureContext(context)
     await use(context)
+    await saveCoverage()
     assertNoPageErrors()
   },
 
@@ -647,7 +668,11 @@ export const test = base.extend<Fixtures>({
   },
 
   loginAs: async ({ browser }, use) => {
-    const opened: { context: BrowserContext; assertNoPageErrors: () => void }[] = []
+    const opened: {
+      context: BrowserContext
+      assertNoPageErrors: () => void
+      saveCoverage: () => Promise<void>
+    }[] = []
     await use(async user => {
       // The same thing a real sign-in leaves behind: the session token in localStorage.
       const context = await browser.newContext({
@@ -658,9 +683,14 @@ export const test = base.extend<Fixtures>({
           ],
         },
       })
-      opened.push({ context, assertNoPageErrors: watchContext(context) })
+      opened.push({
+        context,
+        assertNoPageErrors: watchContext(context),
+        saveCoverage: measureContext(context),
+      })
       return context.newPage()
     })
+    for (const { saveCoverage } of opened) await saveCoverage()
     for (const { context } of opened) await context.close()
     for (const { assertNoPageErrors } of opened) assertNoPageErrors()
   },

@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
+import { COVERAGE_ENABLED } from './e2e/support/coverage'
 import {
   BACKEND_PORT,
   BACKEND_URL,
@@ -34,6 +35,8 @@ export default defineConfig({
   testMatch: '**/*.spec.ts',
   fullyParallel: true,
   forbidOnly: true,
+  // E2E_COVERAGE=1: clear the last coverage data, and write the report when the run ends.
+  globalSetup: COVERAGE_ENABLED ? './e2e/support/coverage.ts' : undefined,
   // A flaky e2e test is a bug to fix, not to retry.
   retries: 0,
   workers: isCI ? 2 : undefined,
