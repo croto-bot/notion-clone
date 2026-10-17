@@ -108,7 +108,9 @@ def test_search_children_and_breadcrumbs_from_one_workspace_pass(
     """
     workspace = create_workspace(auth_client)
     root = create_page(auth_client, workspace["id"], title="Root")
-    middle = create_page(auth_client, workspace["id"], parent_id=root["id"], title="Mid")
+    middle = create_page(
+        auth_client, workspace["id"], parent_id=root["id"], title="Mid"
+    )
     leaf = create_page(
         auth_client, workspace["id"], parent_id=middle["id"], title="Leaf Zephyr"
     )

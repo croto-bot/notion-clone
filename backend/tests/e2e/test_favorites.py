@@ -105,7 +105,9 @@ def test_viewer_cannot_unfavorite(
     page = create_page(auth_client, workspace["id"])
     assert auth_client.put(f"/pages/{page['id']}/favorite").status_code == 204
 
-    assert_error(viewer.client.delete(f"/pages/{page['id']}/favorite"), 403, "forbidden")
+    assert_error(
+        viewer.client.delete(f"/pages/{page['id']}/favorite"), 403, "forbidden"
+    )
 
     favorites = auth_client.get(f"/workspaces/{workspace['id']}/favorites").json()
     assert [p["id"] for p in favorites] == [page["id"]]

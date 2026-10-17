@@ -156,12 +156,8 @@ def test_rows_carry_the_callers_role(
     from tests.e2e.helpers import make_member
 
     workspace = create_workspace(auth_client)
-    database = create_page(
-        auth_client, workspace["id"], title="Db", kind="database"
-    )
-    create_page(
-        auth_client, workspace["id"], parent_id=database["id"], title="Row"
-    )
+    database = create_page(auth_client, workspace["id"], title="Db", kind="database")
+    create_page(auth_client, workspace["id"], parent_id=database["id"], title="Row")
     viewer = make_member(register_user, auth_client, workspace["id"], role="viewer")
 
     rows = viewer.client.get(f"/pages/{database['id']}/rows").json()
