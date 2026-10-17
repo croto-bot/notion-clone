@@ -9,7 +9,7 @@ import { usePageEditorApi } from '@/contexts/PageEditorContext'
 import { usePageActions } from '@/hooks/usePageActions'
 import { patchPageEverywhere } from '@/features/pages/page-cache'
 import { randomEmoji } from '@/features/emoji/emoji-data'
-import { coverBackground, COVER_PRESETS } from '@/lib/colors'
+import { coverBackground } from '@/lib/colors'
 import { consumeTitleFocus } from '@/lib/title-focus'
 import { cn } from '@/lib/utils'
 import type { PageResponse } from '@/types/page'
@@ -29,7 +29,7 @@ function Cover({ page, editable }: { page: PageResponse; editable: boolean }) {
   const repositioning = dragPosition !== null
   const position = dragPosition ?? page.cover_position
   const box = useRef<HTMLDivElement>(null)
-  const isImage = !!page.cover && !COVER_PRESETS.some(preset => preset.key === page.cover)
+  const isImage = !!page.cover && page.cover.startsWith('https://')
 
   if (!page.cover) return null
 

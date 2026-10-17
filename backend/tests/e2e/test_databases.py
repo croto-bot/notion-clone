@@ -176,3 +176,29 @@ def test_page_options_can_be_updated(auth_client: httpx.Client) -> None:
     assert updated["locked"] is True
     assert updated["font"] == "mono"
     assert updated["last_edited_by"]["id"] == updated["created_by"]["id"]
+
+
+def test_cover_must_be_a_preset_or_an_https_url(auth_client: httpx.Client) -> None:
+    """The cover lands in a CSS background: only the picker's preset keys and
+    https image URLs are accepted (422 otherwise), so no other scheme or
+    arbitrary string ships into the page."""
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+
+    for bad in ("http://cdn.example.com/bg.png", "javascript:alert(1)", "gradient-7"):
+        body = assert_error(
+            auth_client.patch(f"/pages/{page['id']}", json={"cover": bad}),
+            422,
+            "validation_error",
+        )
+        assert [issue["loc"] for issue in body["detail"]] == [["body", "cover"]]
+
+    kept = auth_client.get(f"/pages/{page['id']}").json()
+    assert kept["cover"] is None
+
+    for good in ("gradient-1", "https://cdn.example.com/bg.png"):
+        saved = auth_client.patch(f"/pages/{page['id']}", json={"cover": good}).json()
+        assert saved["cover"] == good
+
+    cleared = auth_client.patch(f"/pages/{page['id']}", json={"cover": None}).json()
+    assert cleared["cover"] is None

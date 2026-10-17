@@ -16,7 +16,9 @@ type Tab = 'gallery' | 'link'
 export function CoverPicker({ current, onSelect, onRemove }: CoverPickerProps) {
   const [tab, setTab] = useState<Tab>('gallery')
   const [url, setUrl] = useState('')
-  const validUrl = /^https?:\/\/\S+$/i.test(url.trim())
+  // The backend accepts presets and https URLs only; refuse the rest here so
+  // the picker never offers a submit the server would reject.
+  const validUrl = /^https:\/\/\S+$/i.test(url.trim())
 
   return (
     <div className="w-[400px]">

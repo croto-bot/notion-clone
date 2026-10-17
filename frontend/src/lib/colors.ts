@@ -67,15 +67,18 @@ export const COVER_PRESETS = [
   { key: 'color-purple', label: 'Purple', css: '#6940a5' },
 ] as const
 
-/** CSS `background` for a page cover: a preset key or an image URL. */
+/** CSS `background` for a page cover: a preset key or an https image URL.
+ * Anything else (a stale value, another scheme) renders no background. */
 export function coverBackground(
   cover: string,
   position: number
 ):
   | { background: string }
-  | { backgroundImage: string; backgroundSize: string; backgroundPosition: string } {
+  | { backgroundImage: string; backgroundSize: string; backgroundPosition: string }
+  | undefined {
   const preset = COVER_PRESETS.find(item => item.key === cover)
   if (preset) return { background: preset.css }
+  if (!cover.startsWith('https://')) return undefined
   return {
     backgroundImage: `url("${cover.replace(/"/g, '%22')}")`,
     backgroundSize: 'cover',

@@ -10,6 +10,26 @@ from app.core.optional_model import partial_model
 from app.modules.pages.models import PageFont, PageKind
 from app.modules.workspaces.models import WorkspaceRole
 
+# The cover picker's presets (docs/SPEC.md §4). A cover is one of these keys
+# or an https image URL; anything else would ship every scheme the browser
+# accepts into the page background.
+COVER_PRESET_KEYS = frozenset(
+    {
+        "gradient-1",
+        "gradient-2",
+        "gradient-3",
+        "gradient-4",
+        "gradient-5",
+        "gradient-6",
+        "color-red",
+        "color-orange",
+        "color-yellow",
+        "color-green",
+        "color-blue",
+        "color-purple",
+    }
+)
+
 
 class UserRef(BaseModel):
     id: uuid.UUID
@@ -93,6 +113,13 @@ class PageUpdate(BaseModel):
     database_schema: list[dict[str, Any]] | None = None
     database_views: list[dict[str, Any]] | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("cover")
+    @classmethod
+    def cover_is_a_preset_or_an_https_url(cls, value: str | None) -> str | None:
+        if value is None or value in COVER_PRESET_KEYS or value.startswith("https://"):
+            return value
+        raise ValueError("cover must be a preset key or an https URL")
 
 
 @partial_model

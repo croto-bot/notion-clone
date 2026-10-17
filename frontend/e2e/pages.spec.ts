@@ -263,6 +263,24 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
 
     await page.getByTestId('page-cover').hover()
     await page.getByRole('button', { name: 'Change cover' }).click()
+    await page.getByRole('dialog').getByRole('tab', { name: 'Link' }).click()
+    const link = page.getByRole('dialog').getByLabel('Image link')
+    const submit = page.getByRole('dialog').getByRole('button', { name: 'Submit' })
+    // Anything but an https image URL is refused (the backend 422s it too).
+    await link.fill('http://cdn.example.com/bg.png')
+    await expect(submit).toBeDisabled()
+    await link.fill('javascript:alert(1)')
+    await expect(submit).toBeDisabled()
+    await link.fill('https://cdn.example.com/bg.png')
+    await expect(submit).toBeEnabled()
+    await submit.click()
+    await expect(page.getByTestId('page-cover')).toBeVisible()
+    await expect
+      .poll(async () => (await getPage(api, user, note.id)).cover)
+      .toBe('https://cdn.example.com/bg.png')
+
+    await page.getByTestId('page-cover').hover()
+    await page.getByRole('button', { name: 'Change cover' }).click()
     await page.getByRole('dialog').getByRole('button', { name: 'Remove', exact: true }).click()
     await expect(page.getByTestId('page-cover')).toBeHidden()
     await expect.poll(async () => (await getPage(api, user, note.id)).cover).toBeNull()
