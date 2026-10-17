@@ -8,6 +8,7 @@ from sqlalchemy import asc, case, delete, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.modules.pages.models import Page, PageFavorite, PageKind, PageVisit
+from app.modules.workspaces.models import WorkspaceMember, WorkspaceRole
 from app.repositories.exceptions import DuplicateError
 from app.repositories.sql_repository import SQLAlchemyRepository
 
@@ -313,14 +314,23 @@ class PageRepository(SQLAlchemyRepository[Page]):
         result = await self._session.execute(statement)
         return result.scalar_one_or_none()
 
-    async def access_fields(
-        self, page_id: uuid.UUID
-    ) -> tuple[uuid.UUID, datetime | None] | None:
-        """``workspace_id`` and ``deleted_at``: what the socket write-guard reads."""
-        statement = select(Page.workspace_id, Page.deleted_at).where(Page.id == page_id)
+    async def write_access(
+        self, page_id: uuid.UUID, user_id: uuid.UUID
+    ) -> tuple[datetime | None, WorkspaceRole] | None:
+        """The page's deleted_at and the member's role, in one joined read.
+
+        This is what the collab socket's write guard checks on every push:
+        one query instead of a page read followed by a membership read.
+        None when the page is gone or the user is not a member.
+        """
+        statement = (
+            select(Page.deleted_at, WorkspaceMember.role)
+            .join(WorkspaceMember, WorkspaceMember.workspace_id == Page.workspace_id)
+            .where(Page.id == page_id, WorkspaceMember.user_id == user_id)
+        )
         result = await self._session.execute(statement)
         row = result.one_or_none()
-        return (row.workspace_id, row.deleted_at) if row is not None else None
+        return (row.deleted_at, row.role) if row is not None else None
 
     async def has_child(self, page_id: uuid.UUID) -> bool:
         """Whether a live page sits directly under this one.

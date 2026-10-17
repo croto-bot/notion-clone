@@ -16,7 +16,9 @@ from tests.e2e.helpers import (
     create_workspace,
     doc_with_text,
     drop_server_connections,
+    held_db_lock,
     make_member,
+    wait_for_blocked_queries,
     ws_close_code,
     yjs_send_awareness,
     yjs_send_update,
@@ -243,52 +245,59 @@ def _token_of(client: httpx.Client) -> str:
 
 
 def test_put_document_during_socket_connect_is_not_lost(
-    server: LiveServer, auth_client: httpx.Client
+    server: LiveServer, auth_client: httpx.Client, db: Database
 ) -> None:
-    """A markdown import (PUT) that commits while a socket connects must win.
+    """A PUT that commits exactly while a socket connects must win.
 
-    The room must not be built from the pre-PUT bytes: this session also
-    edits, so the next flush would write that stale room over the import
-    (the flush must keep both the import and the socket edit).
+    The interleaving is forced, not hoped for: a held row lock parks the
+    PUT's database write mid-request (inside the per-page lock it shares
+    with the room), the socket completes its handshake while the PUT is
+    still in flight - pg_stat_activity proves the write is parked - and
+    only then is the lock released. The room must be built from the
+    committed import, so the disconnect flush keeps both the import and
+    the socket's own edit; without the shared lock the room would load the
+    pre-PUT bytes and the next flush would overwrite the import.
     """
-    for _attempt in range(5):
-        workspace = create_workspace(auth_client)
-        page = create_page(auth_client, workspace["id"])
-        url = _collab_url(server, page["id"], _token_of(auth_client))
-        _doc, update = doc_with_text("imported-via-put")
-        state = base64.b64encode(update).decode()
-        put_box: dict[str, Any] = {}
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+    url = _collab_url(server, page["id"], _token_of(auth_client))
+    _doc, update = doc_with_text("imported-via-put")
+    state = base64.b64encode(update).decode()
+    box: dict[str, Any] = {}
 
-        def _put(
-            box: dict[str, Any] = put_box,
-            page_id: str = page["id"],
-            body: str = state,
-        ) -> None:
-            box["response"] = auth_client.put(
-                f"/pages/{page_id}/document", json={"state": body}
-            )
+    def _put() -> None:
+        box["response"] = auth_client.put(
+            f"/pages/{page['id']}/document", json={"state": state}
+        )
 
+    with held_db_lock(
+        db, "SELECT id FROM pages WHERE id = %s FOR UPDATE", (page["id"],)
+    ):
         thread = threading.Thread(target=_put)
         thread.start()
-        with connect(url, open_timeout=5) as conn:  # handshake overlaps the PUT
-            doc, _ = doc_with_text()
-            yjs_sync(conn, doc)
-            _edit(doc, "typed-in-the-socket")
-            yjs_send_update(conn, doc)
-            yjs_wait_for(conn, doc, "typed-in-the-socket")
-        thread.join(timeout=10)
-        assert put_box["response"].status_code == 200, put_box["response"].text
-        time.sleep(FLUSH_WAIT_S)  # the disconnect flush (and the debounce) run
+        wait_for_blocked_queries(db, count=1, needle="UPDATE pages")
+        # Handshake done, room build queued behind the PUT's page lock.
+        socket_conn = connect(url, open_timeout=5)
+    # The row lock is gone: the PUT commits, then the room builds from the
+    # fresh stored bytes.
+    thread.join(timeout=10)
+    assert box["response"].status_code == 200, box["response"].text
 
-        stored = auth_client.get(f"/pages/{page['id']}/document").json()
-        stored_doc = Doc()
-        stored_doc.apply_update(base64.b64decode(stored["state"]))
-        if "imported-via-put" in _doc_text(stored_doc):
-            assert "typed-in-the-socket" in _doc_text(stored_doc)  # both changes
-            return
-        # The import lost this round: the race did not fire, try again. Only
-        # a lost import on every attempt fails the test.
-    raise AssertionError("the PUT document was lost to the socket flush")
+    with socket_conn:
+        doc, _ = doc_with_text()
+        yjs_sync(socket_conn, doc)
+        assert "imported-via-put" in _doc_text(doc)  # the room kept the import
+        _edit(doc, "typed-in-the-socket")
+        yjs_send_update(socket_conn, doc)
+        yjs_wait_for(socket_conn, doc, "typed-in-the-socket")
+    time.sleep(FLUSH_WAIT_S)  # the disconnect flush (and the debounce) run
+
+    stored = auth_client.get(f"/pages/{page['id']}/document").json()
+    stored_doc = Doc()
+    stored_doc.apply_update(base64.b64decode(stored["state"]))
+    text = _doc_text(stored_doc)
+    assert "imported-via-put" in text
+    assert "typed-in-the-socket" in text
 
 
 def test_failed_flush_keeps_the_edit_dirty_and_retries(

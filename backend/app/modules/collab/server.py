@@ -46,6 +46,9 @@ if TYPE_CHECKING:
 FLUSH_INTERVAL_S = 1.0
 # Bounded retries at shutdown: a dead database must not hang the process.
 SHUTDOWN_FLUSH_ROUNDS = 3
+# A beat between the shutdown rounds, so a failed flush is retried after
+# the pool or the database had a moment to come back, not in a tight loop.
+SHUTDOWN_FLUSH_GAP_S = 0.3
 
 
 def _session_factory() -> async_sessionmaker[AsyncSession]:
@@ -87,6 +90,8 @@ class CollabServer:
         for _round in range(SHUTDOWN_FLUSH_ROUNDS):
             if not self._dirty:
                 break
+            if _round:
+                await asyncio.sleep(SHUTDOWN_FLUSH_GAP_S)
             await self.flush_all()
         else:
             logger.error(
@@ -166,26 +171,20 @@ class CollabServer:
     async def may_write(self, page_id: uuid.UUID, user_id: uuid.UUID) -> bool:
         """Fresh write-access check for one incoming document push.
 
-        Read in its own short session: the connect-time check is long gone by
-        then. The page must be out of the trash and the member must still
-        have a write role, so a trash, demotion or removal after connect
-        takes effect from the client's next push.
+        One joined read in its own short session (the connect-time check is
+        long gone by then). The page must be out of the trash and the member
+        must still have a write role, so a trash, demotion or removal after
+        connect takes effect from the client's next push.
         """
         from app.modules.pages.repository import PageRepository  # circular-safe
         from app.modules.workspaces.models import WorkspaceRole
-        from app.modules.workspaces.repository import WorkspaceMemberRepository
 
         async with _session_factory()() as session:
-            fields = await PageRepository(session).access_fields(page_id)
-            if fields is None:
+            access = await PageRepository(session).write_access(page_id, user_id)
+            if access is None:
                 return False
-            workspace_id, deleted_at = fields
-            if deleted_at is not None:
-                return False
-            member = await WorkspaceMemberRepository(session).get_membership(
-                workspace_id, user_id
-            )
-            return member is not None and member.role != WorkspaceRole.VIEWER
+            deleted_at, role = access
+            return deleted_at is None and role != WorkspaceRole.VIEWER
 
     def _touch(self, name: str) -> None:
         self._dirty.add(name)
