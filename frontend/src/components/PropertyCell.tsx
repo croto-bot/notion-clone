@@ -25,8 +25,15 @@ import type { DatabaseProperty, DateValue, PropertyValue, SelectOption } from '@
 
 type Variant = 'cell' | 'panel'
 
-const cellBase =
-  'flex w-full min-h-[34px] items-start px-2 py-[7px] text-left text-[14px] leading-[20px]'
+function cellBox(variant: Variant, className?: string) {
+  return cn(
+    'flex w-full px-2 text-left text-[14px] leading-[20px]',
+    variant === 'panel'
+      ? 'min-h-[32px] items-start py-1.5'
+      : 'h-[33px] items-center overflow-hidden',
+    className
+  )
+}
 
 interface EditorProps {
   row: RowLike
@@ -76,7 +83,7 @@ function InlineInputCell({ property, value, variant, editable, commit }: EditorP
           else if (event.key === 'Escape') finish(false)
           event.stopPropagation()
         }}
-        className="bg-background min-h-[34px] w-full px-2 py-[7px] text-[14px] leading-[20px] shadow-[inset_0_0_0_2px_rgba(35,131,226,0.6)] outline-none"
+        className="bg-background h-[33px] w-full px-2 text-[14px] leading-[20px] shadow-[inset_0_0_0_2px_rgba(35,131,226,0.6)] outline-none"
       />
     )
   }
@@ -90,10 +97,12 @@ function InlineInputCell({ property, value, variant, editable, commit }: EditorP
         done.current = false
         setDraft(text)
       }}
-      className={cn(
-        cellBase,
-        'cursor-text disabled:cursor-default',
-        variant === 'panel' && 'rounded-[4px] hover:bg-hover'
+      className={cellBox(
+        variant,
+        cn(
+          'cursor-text disabled:cursor-default',
+          variant === 'panel' && 'rounded-[4px] hover:bg-hover'
+        )
       )}
     >
       {text ? (
@@ -112,10 +121,10 @@ function InlineInputCell({ property, value, variant, editable, commit }: EditorP
   )
 }
 
-function CheckboxCell({ property, value, editable, commit }: EditorProps) {
+function CheckboxCell({ property, value, variant, editable, commit }: EditorProps) {
   const checked = toBool(value)
   return (
-    <div className={cn(cellBase, 'items-center')}>
+    <div className={cellBox(variant)}>
       <button
         type="button"
         role="checkbox"
@@ -324,17 +333,16 @@ function SelectCell({ property, value, variant, editable, commit, row }: EditorP
 
   const display = <PropertyValueView property={property} value={value} members={members} />
 
-  if (!editable) return <div className={cellBase}>{display}</div>
+  if (!editable) return <div className={cellBox(variant)}>{display}</div>
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
           aria-label={`${property.name} of ${row.title || 'Untitled'}`}
-          className={cn(
-            cellBase,
-            'cursor-pointer',
-            variant === 'panel' && 'rounded-[4px] hover:bg-hover'
+          className={cellBox(
+            variant,
+            cn('cursor-pointer', variant === 'panel' && 'rounded-[4px] hover:bg-hover')
           )}
         >
           {isEmptyValue(property, value) && variant === 'panel' ? (
@@ -377,7 +385,7 @@ function DateCell({ property, value, variant, editable, commit, row }: EditorPro
   const [open, setOpen] = useState(false)
   const show = <PropertyValueView property={property} value={value} />
 
-  if (!editable) return <div className={cellBase}>{show}</div>
+  if (!editable) return <div className={cellBox(variant)}>{show}</div>
   const setDate = (next: DateValue | null) => commit(next)
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -385,10 +393,9 @@ function DateCell({ property, value, variant, editable, commit, row }: EditorPro
         <button
           type="button"
           aria-label={`${property.name} of ${row.title || 'Untitled'}`}
-          className={cn(
-            cellBase,
-            'cursor-pointer',
-            variant === 'panel' && 'rounded-[4px] hover:bg-hover'
+          className={cellBox(
+            variant,
+            cn('cursor-pointer', variant === 'panel' && 'rounded-[4px] hover:bg-hover')
           )}
         >
           {date ? show : variant === 'panel' ? <span className="text-subtle">Empty</span> : null}
@@ -450,17 +457,16 @@ function PersonCell({ property, value, variant, editable, commit, row }: EditorP
   const ids = toIds(value)
   const display = <PropertyValueView property={property} value={value} members={members} />
 
-  if (!editable) return <div className={cellBase}>{display}</div>
+  if (!editable) return <div className={cellBox(variant)}>{display}</div>
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
           aria-label={`${property.name} of ${row.title || 'Untitled'}`}
-          className={cn(
-            cellBase,
-            'cursor-pointer',
-            variant === 'panel' && 'rounded-[4px] hover:bg-hover'
+          className={cellBox(
+            variant,
+            cn('cursor-pointer', variant === 'panel' && 'rounded-[4px] hover:bg-hover')
           )}
         >
           {ids.length === 0 && variant === 'panel' ? (
@@ -535,7 +541,7 @@ export function PropertyCell({ row, property, variant = 'cell' }: PropertyCellPr
     case 'created_time':
     case 'last_edited_time':
       return (
-        <div className={cn(cellBase, 'text-muted-foreground')}>
+        <div className={cellBox(variant, 'text-muted-foreground')}>
           <PropertyValueView property={property} value={value} members={members} />
         </div>
       )

@@ -10,11 +10,12 @@ import type { PageResponse } from '@/types/page'
 
 function DatabaseSkeleton() {
   return (
-    <div aria-hidden="true" className="animate-pulse space-y-2 py-2">
-      <div className="bg-hover h-7 w-48 rounded-[4px]" />
-      <div className="bg-hover h-8 w-full rounded-[4px]" />
-      <div className="bg-hover h-8 w-full rounded-[4px]" />
-      <div className="bg-hover h-8 w-2/3 rounded-[4px]" />
+    <div aria-hidden="true" className="animate-pulse">
+      <div className="mb-2 h-7 w-24 rounded-[4px] bg-hover" />
+      <div className="h-[33px] w-full bg-hover" />
+      <div className="mt-px h-[33px] w-full bg-hover" />
+      <div className="mt-px h-[33px] w-full bg-hover" />
+      <div className="mt-px h-[33px] w-2/3 bg-hover" />
     </div>
   )
 }

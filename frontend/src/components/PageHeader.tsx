@@ -14,9 +14,10 @@ import { consumeTitleFocus } from '@/lib/title-focus'
 import { cn } from '@/lib/utils'
 import type { PageResponse } from '@/types/page'
 
-/** Content column: 708 px of text between 96 px of margin (full width keeps the margin only). */
-export function pageColumnClass(page: Pick<PageResponse, 'full_width'>) {
-  return cn('mx-auto w-full px-6 md:px-24', page.full_width ? 'max-w-none' : 'max-w-[900px]')
+/** Docs stay in a 708 px column. Full width and databases keep the 96 px margin only. */
+export function pageColumnClass(page: { full_width?: boolean; kind?: string }) {
+  const wide = page.full_width || page.kind === 'database'
+  return cn('mx-auto w-full px-6 md:px-24', wide ? 'max-w-none' : 'max-w-[900px]')
 }
 
 const SAVE_DELAY_MS = 500

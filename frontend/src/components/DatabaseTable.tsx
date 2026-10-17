@@ -42,8 +42,8 @@ function TitleCell({ row }: { row: RowLike }) {
   }
 
   return (
-    <div className="group/title flex min-h-[34px] items-start">
-      <PageIcon icon={row.icon} size={20} className="mt-[7px] ml-2 shrink-0" />
+    <div className="group/title flex h-[33px] items-center">
+      <PageIcon icon={row.icon} size={18} className="ml-2 shrink-0" />
       {draft !== null ? (
         <input
           // eslint-disable-next-line jsx-a11y/no-autofocus -- opened by the user's click, or by "New"
@@ -59,7 +59,7 @@ function TitleCell({ row }: { row: RowLike }) {
             else if (event.key === 'Escape') finish(false)
             event.stopPropagation()
           }}
-          className="bg-background min-h-[34px] min-w-0 flex-1 px-1.5 py-[7px] text-[14px] leading-[20px] font-medium shadow-[inset_0_0_0_2px_rgba(35,131,226,0.6)] outline-none"
+          className="bg-background h-[33px] min-w-0 flex-1 px-1.5 text-[14px] leading-[20px] font-medium shadow-[inset_0_0_0_2px_rgba(35,131,226,0.6)] outline-none"
         />
       ) : (
         <button
@@ -67,7 +67,7 @@ function TitleCell({ row }: { row: RowLike }) {
           aria-label={`Title: ${label}`}
           disabled={!editable}
           onClick={() => setDraft(row.title)}
-          className="min-h-[34px] min-w-0 flex-1 cursor-text px-1.5 py-[7px] text-left text-[14px] leading-[20px] font-medium disabled:cursor-default"
+          className="h-[33px] min-w-0 flex-1 cursor-text px-1.5 text-left text-[14px] leading-[20px] font-medium disabled:cursor-default"
         >
           <span className={cn('block truncate', !row.title.trim() && 'text-subtle font-normal')}>
             {label}
@@ -79,7 +79,7 @@ function TitleCell({ row }: { row: RowLike }) {
           type="button"
           aria-label={`Open ${label}`}
           onClick={() => openRow(row.id)}
-          className="bg-background text-muted-foreground hover:bg-hover mt-[5px] mr-1.5 flex h-6 shrink-0 items-center gap-1 rounded-[4px] px-1.5 text-[12px] font-medium opacity-0 shadow-[0_0_0_1px_var(--border)] group-hover/title:opacity-100 focus-visible:opacity-100"
+          className="bg-background text-muted-foreground hover:bg-hover mr-1.5 flex h-6 shrink-0 items-center gap-1 rounded-[4px] px-1.5 text-[12px] font-medium opacity-0 shadow-[0_0_0_1px_var(--border)] group-hover/title:opacity-100 focus-visible:opacity-100"
         >
           <ExternalLink className="size-3.5" />
           Open
@@ -132,11 +132,11 @@ export function DatabaseTable() {
   const width = TITLE_WIDTH + others.length * COLUMN_WIDTH + (editable ? ADD_WIDTH : 0)
 
   return (
-    <div className="nx-scroll overflow-x-auto pb-2" data-testid="database-table">
-      <div role="table" aria-label="Table" className="pl-8" style={{ minWidth: width + 32 }}>
+    <div className="nx-scroll -ml-8 overflow-x-auto pb-2 pl-8" data-testid="database-table">
+      <div role="table" aria-label="Table" style={{ minWidth: width }}>
         <div
           role="row"
-          className="grid border-y text-[13px]"
+          className="grid h-[33px] border-y text-[14px]"
           style={{ gridTemplateColumns: columns }}
         >
           {[title, ...others].map(property =>
@@ -145,7 +145,7 @@ export function DatabaseTable() {
                 <PropertyMenu property={property}>
                   <button
                     type="button"
-                    className="text-muted-foreground hover:bg-hover flex h-[32px] w-full min-w-0 items-center gap-1.5 px-2 text-left font-medium transition-colors duration-75 [&_svg]:size-4 [&_svg]:shrink-0"
+                    className="text-muted-foreground hover:bg-hover flex h-[33px] w-full min-w-0 items-center gap-1.5 px-2 text-left text-[14px] font-medium transition-colors duration-75 [&_svg]:size-4 [&_svg]:shrink-0"
                   >
                     <PropertyIcon type={property.type} />
                     <span className="truncate">{property.name}</span>
@@ -159,7 +159,7 @@ export function DatabaseTable() {
               <button
                 type="button"
                 aria-label="Add a property"
-                className="text-muted-foreground hover:bg-hover grid h-[32px] place-items-center transition-colors duration-75"
+                className="text-muted-foreground hover:bg-hover grid h-[33px] place-items-center transition-colors duration-75"
               >
                 <Plus className="size-4" />
               </button>
@@ -173,7 +173,7 @@ export function DatabaseTable() {
             role="row"
             data-row-id={row.id}
             aria-label={row.title || UNTITLED}
-            className="group/row hover:bg-hover/50 relative grid border-b text-[14px]"
+            className="group/row hover:bg-hover/50 relative grid h-[33px] border-b text-[14px]"
             style={{ gridTemplateColumns: columns }}
           >
             <div role="cell" className="relative border-r">
@@ -198,7 +198,7 @@ export function DatabaseTable() {
             type="button"
             aria-label="Add a row"
             onClick={() => void createRow()}
-            className="text-subtle hover:bg-hover flex h-[34px] w-full items-center gap-2 border-b px-2 text-left text-[14px] transition-colors duration-75"
+            className="text-subtle hover:bg-hover flex h-[33px] w-full items-center gap-2 border-b px-2 text-left text-[14px] transition-colors duration-75"
             style={{ minWidth: width }}
           >
             <Plus className="size-4" />
