@@ -12,6 +12,7 @@ from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.routing import Match
 
+from app.core.client_id import parse_client_id
 from app.core.logging.context import (
     WideEventContext,
     clear_wide_event_context,
@@ -51,6 +52,7 @@ class WideEventMiddleware(BaseHTTPMiddleware):
         ctx.trace_id = request.headers.get("x-trace-id") or request.headers.get(
             "x-request-id"
         )
+        ctx.client_id = parse_client_id(request.headers.get("X-Client-Id"))
 
         # Capture query string, with the values of sensitive params redacted
         if request.url.query:

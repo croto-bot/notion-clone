@@ -30,6 +30,8 @@ class WideEventContext:
     user_id: str | None = None
     email: str | None = None
     session_id: str | None = None
+    # Tab that sent a UUID X-Client-Id. Echoed onto workspace events.
+    client_id: str | None = None
 
     # Request metadata (set by middleware)
     method: str = ""
@@ -92,6 +94,8 @@ class WideEventContext:
             data["email"] = self.email
         if self.session_id:
             data["session_id"] = self.session_id
+        if self.client_id:
+            data["client_id"] = self.client_id
         if self.path_template and self.path_template != self.path:
             data["path_template"] = self.path_template
         if self.query_string:

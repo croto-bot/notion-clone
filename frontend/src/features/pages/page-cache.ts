@@ -16,8 +16,24 @@ type SummaryPatch = Partial<
   Pick<PageSummary, 'title' | 'icon' | 'is_public' | 'updated_at' | 'last_edited_at'>
 >
 
-/** Shows a change of title, icon or publish state everywhere a page is listed, before the server answers. */
-export function patchPageEverywhere(queryClient: QueryClient, id: string, patch: SummaryPatch) {
+/** Title before the first optimistic title patch, so a refused edit can put it back.
+ * Keystrokes patch the cache before the mutation snapshots it, so the mutation
+ * snapshot alone would restore the refused title. */
+const titleBeforeEdit = new Map<string, string>()
+
+function readTitle(queryClient: QueryClient, id: string): string | undefined {
+  const detail = queryClient.getQueryData<PageResponse>(queryKeys.pages.detail(id))
+  if (detail) return detail.title
+  for (const key of LIST_KEYS) {
+    for (const [, pages] of queryClient.getQueriesData<PageSummary[]>({ queryKey: key })) {
+      const found = pages?.find(page => page.id === id)
+      if (found) return found.title
+    }
+  }
+  return undefined
+}
+
+function applySummary(queryClient: QueryClient, id: string, patch: SummaryPatch) {
   const apply = <T extends PageSummary>(list: T[] | undefined) =>
     list?.map(page => (page.id === id ? { ...page, ...patch } : page))
   for (const key of LIST_KEYS) queryClient.setQueriesData<PageSummary[]>({ queryKey: key }, apply)
@@ -25,6 +41,23 @@ export function patchPageEverywhere(queryClient: QueryClient, id: string, patch:
   queryClient.setQueryData<PageResponse>(queryKeys.pages.detail(id), old =>
     old ? { ...old, ...patch } : old
   )
+}
+
+/** Shows a change of title, icon or publish state everywhere a page is listed, before the server answers. */
+export function patchPageEverywhere(queryClient: QueryClient, id: string, patch: SummaryPatch) {
+  if (patch.title !== undefined && !titleBeforeEdit.has(id)) {
+    const previous = readTitle(queryClient, id)
+    if (previous !== undefined && previous !== patch.title) titleBeforeEdit.set(id, previous)
+  }
+  applySummary(queryClient, id, patch)
+}
+
+/** Puts back the title from before the optimistic edit. No-op once the server title is stored. */
+export function rollbackOptimisticTitle(queryClient: QueryClient, id: string) {
+  const title = titleBeforeEdit.get(id)
+  if (title === undefined) return
+  titleBeforeEdit.delete(id)
+  applySummary(queryClient, id, { title })
 }
 
 /** Marks every page list stale: the next render (or the active one) reloads it. */
@@ -65,8 +98,11 @@ export function invalidateRowsOf(queryClient: QueryClient, id: string, parentId?
 
 /** Replaces the cached detail of a page with a fresh server response, and updates the lists to match. */
 export function storePageResponse(queryClient: QueryClient, page: PageResponse) {
+  // The server title is the new baseline. Clear before writing so the write
+  // does not record the optimistic title as the thing to roll back to.
+  titleBeforeEdit.delete(page.id)
   queryClient.setQueryData(queryKeys.pages.detail(page.id), page)
-  patchPageEverywhere(queryClient, page.id, {
+  applySummary(queryClient, page.id, {
     title: page.title,
     icon: page.icon,
     is_public: page.is_public,

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from app.core.client_id import get_client_id
 from app.exceptions import ForbiddenError
 from app.modules.pages.exceptions import (
     InvalidMoveError,
@@ -802,11 +803,14 @@ class PageService(BaseService[Page]):
                 # The page was purged after the access read: report it, and
                 # do not push the write into the room of a deleted page.
                 raise NotFoundError(detail=f"Page {page_id} not found")
-            self.collab_server.note_write(page_id, user_id)
-            self.collab_server.apply_external_update(page_id, state)
-        self._publish(
-            page.workspace_id, "page.updated", actor_id=user_id, page_id=page_id
-        )
+            self.collab_server.note_write(page_id, user_id, client_id=get_client_id())
+            # A live room's flush publishes this change, with the writer and
+            # tab noted above: publishing here too would send it twice.
+            in_room = self.collab_server.apply_external_update(page_id, state)
+        if not in_room:
+            self._publish(
+                page.workspace_id, "page.updated", actor_id=user_id, page_id=page_id
+            )
         return merged
 
     # --- public pages -------------------------------------------------------------------------

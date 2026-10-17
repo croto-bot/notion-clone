@@ -349,8 +349,13 @@ test.describe('databases and publish (F13, F15)', () => {
     await page.getByRole('switch', { name: 'Show Status' }).click()
     await page.keyboard.press('Escape')
     await expect(page.getByRole('columnheader').filter({ hasText: 'Status' })).toHaveCount(0)
-    const saved = await getPage(api, user, database.id)
-    expect(saved.database_views?.[0]?.hidden_properties).toContain(status.id)
+    // The save is queued behind the view's earlier sort writes, so the server
+    // commits it a moment after the column disappears: poll for it.
+    await expect
+      .poll(
+        async () => (await getPage(api, user, database.id)).database_views?.[0]?.hidden_properties
+      )
+      .toContain(status.id)
 
     // Rename the view, add a second one, then delete it again.
     await page.getByRole('button', { name: 'View options for Table' }).click()
