@@ -8,6 +8,7 @@ from sqlalchemy import asc, case, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.modules.pages.models import Page, PageFavorite, PageKind, PageVisit
+from app.repositories.exceptions import DuplicateError
 from app.repositories.sql_repository import SQLAlchemyRepository
 
 
@@ -300,6 +301,31 @@ class PageRepository(SQLAlchemyRepository[Page]):
         statement = select(Page).where(Page.id.in_(page_ids))
         result = await self._session.execute(statement)
         return list(result.scalars().all())
+
+    async def create_in_slot(self, values: dict[str, Any]) -> Page | None:
+        """Insert a page; None when its (parent, position) slot was taken.
+
+        Concurrent creators can compute the same position from the siblings
+        they saw; the unique sibling index rejects the second insert and the
+        caller regenerates a key and retries. Any other error propagates.
+        """
+        try:
+            return await self.create(values)
+        except DuplicateError:
+            await self._session.rollback()
+            return None
+
+    async def move_in_slot(
+        self, page_id: uuid.UUID, parent_id: uuid.UUID | None, position: str
+    ) -> Page | None:
+        """Re-parent a page; None when the target slot was taken (see above)."""
+        try:
+            return await self.update(
+                page_id, {"parent_id": parent_id, "position": position}
+            )
+        except DuplicateError:
+            await self._session.rollback()
+            return None
 
 
 class PageFavoriteRepository(SQLAlchemyRepository[PageFavorite]):

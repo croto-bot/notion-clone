@@ -10,11 +10,13 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -36,6 +38,27 @@ class PageFont(enum.StrEnum):
 
 class Page(TimestampMixin, Base):
     __tablename__ = "pages"
+    __table_args__ = (
+        # Two live siblings can never share a position (sidebar order must be
+        # total). Partial because parent_id is null at the root and distinct
+        # nulls would dodge a plain unique index, and because trashed rows do
+        # not sit in any sidebar: they keep their last position while parked.
+        Index(
+            "uq_pages_position_under_parent",
+            "workspace_id",
+            "parent_id",
+            "position",
+            unique=True,
+            postgresql_where=text("parent_id IS NOT NULL AND deleted_at IS NULL"),
+        ),
+        Index(
+            "uq_pages_position_at_root",
+            "workspace_id",
+            "position",
+            unique=True,
+            postgresql_where=text("parent_id IS NULL AND deleted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     workspace_id: Mapped[uuid.UUID] = mapped_column(

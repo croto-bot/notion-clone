@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import threading
+from typing import TYPE_CHECKING, Any
 
 from tests.e2e.helpers import (
     assert_error,
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     import httpx
 
     from tests.e2e.helpers import RegisteredUser
+    from tests.e2e.stack import Database
 
 
 def test_create_root_page(auth_client: httpx.Client) -> None:
@@ -184,3 +186,75 @@ def test_get_missing_page_is_404(auth_client: httpx.Client) -> None:
     response = auth_client.get("/pages/00000000-0000-4000-8000-000000000000")
 
     assert_error(response, 404, "not_found")
+
+
+# --- sibling position collisions (review finding 9) ------------------------------
+
+
+def test_corrupt_sibling_keys_are_invalid_move_not_500(
+    auth_client: httpx.Client, db: Database
+) -> None:
+    """A key the fractional indexer rejects maps to 400 invalid_move.
+
+    The db fixture corrupts one sibling's order key the way a lost position
+    race leaves rows (a key generate_key_between cannot order): creating and
+    moving around it must not 500.
+    """
+    workspace = create_workspace(auth_client)
+    a = create_page(auth_client, workspace["id"], title="A")
+    b = create_page(auth_client, workspace["id"], title="B")
+    c = create_page(auth_client, workspace["id"], title="C")
+    # "a00" is an invalid fractional key (trailing zero); it sorts after "a0",
+    # so any insert between A and B feeds both bounds to the key generator.
+    assert db.execute("UPDATE pages SET position = 'a00' WHERE id = %s", (b["id"],))
+
+    created = auth_client.post(
+        "/pages",
+        json={"workspace_id": workspace["id"], "title": "D", "after_id": a["id"]},
+    )
+    assert_error(created, 400, "invalid_move")
+
+    moved = auth_client.post(
+        f"/pages/{c['id']}/move",
+        json={"parent_id": None, "after_id": a["id"]},
+    )
+    assert_error(moved, 400, "invalid_move")
+
+
+def test_concurrent_creates_under_one_parent_get_distinct_positions(
+    auth_client: httpx.Client, db: Database
+) -> None:
+    """Two creates that race for the same slot converge on distinct keys.
+
+    Every creator computes a position from the siblings it can see; the
+    unique sibling index rejects a taken slot and the create retries with a
+    fresh key, so all four pages land, each on its own position.
+    """
+    workspace = create_workspace(auth_client)
+    parent = create_page(auth_client, workspace["id"], title="Parent")
+    failures: list[Any] = []
+
+    def _create() -> None:
+        response = auth_client.post(
+            "/pages",
+            json={
+                "workspace_id": workspace["id"],
+                "title": "Racer",
+                "parent_id": parent["id"],
+            },
+        )
+        if response.status_code != 201:
+            failures.append((response.status_code, response.text))
+
+    threads = [threading.Thread(target=_create) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert failures == []
+
+    rows = db.fetch_all(
+        "SELECT position FROM pages WHERE parent_id = %s", (parent["id"],)
+    )
+    assert len(rows) == 4
+    assert len({row[0] for row in rows}) == 4, rows

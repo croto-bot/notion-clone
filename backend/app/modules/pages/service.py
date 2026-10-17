@@ -20,7 +20,7 @@ from app.modules.pages.ordering import generate_key_between
 from app.modules.pages.schemas import Breadcrumb
 from app.modules.pages.yjs import extract_text, merge_updates
 from app.modules.workspaces.models import WorkspaceRole
-from app.repositories.exceptions import NotFoundError
+from app.repositories.exceptions import DuplicateError, NotFoundError
 from app.services.base_crud_service import BaseService
 
 if TYPE_CHECKING:
@@ -38,6 +38,9 @@ if TYPE_CHECKING:
     from app.user.repository import UserRepository
 
 SNIPPET_RADIUS = 40
+# How often a create/move regenerates its position when a concurrent writer
+# took the same sibling slot (the unique sibling index rejects it).
+SLOT_ATTEMPTS = 5
 
 
 def _default_database_schema() -> list[dict[str, Any]]:
@@ -240,8 +243,25 @@ class PageService(BaseService[Page]):
         ``after_id`` set: right after that sibling. ``after_id`` explicitly
         null: first. ``after_id`` omitted: last (SPEC: "Without after_id the
         page goes last"; an explicit null is "first", like Notion's drop on
-        top).
+        top). Sibling keys the indexer cannot order (a lost position race
+        left rows, or a corrupted row) are a client-visible 400, not a 500.
         """
+        try:
+            return PageService._position_between(
+                siblings, after_id, after_id_sent=after_id_sent
+            )
+        except ValueError as exc:
+            raise InvalidMoveError(
+                detail="The sibling order keys leave no valid position"
+            ) from exc
+
+    @staticmethod
+    def _position_between(
+        siblings: list[Page],
+        after_id: uuid.UUID | None,
+        *,
+        after_id_sent: bool,
+    ) -> str:
         if after_id is not None:
             after_index = next(
                 (i for i, page in enumerate(siblings) if page.id == after_id), None
@@ -300,22 +320,11 @@ class PageService(BaseService[Page]):
     async def create_page(
         self, payload: PageCreate, *, user_id: uuid.UUID
     ) -> PageDetail:
-        member = await self.member_repo.get_membership(payload.workspace_id, user_id)
-        if member is None:
-            raise NotFoundError(detail=f"Workspace {payload.workspace_id} not found")
-        self._require_editor(member)
         parent = await self._visible_parent_or_404(
             payload.workspace_id, payload.parent_id
         )
         if parent is not None and parent.deleted_at is not None:
             raise NotFoundError(detail=f"Page {parent.id} not found")
-
-        siblings = await self.repo.siblings(payload.workspace_id, payload.parent_id)
-        position = self._position_after(
-            siblings,
-            payload.after_id,
-            after_id_sent="after_id" in payload.model_fields_set,
-        )
 
         values: dict[str, Any] = {
             "workspace_id": payload.workspace_id,
@@ -323,7 +332,6 @@ class PageService(BaseService[Page]):
             "kind": payload.kind,
             "title": payload.title,
             "icon": payload.icon,
-            "position": position,
             "created_by_id": user_id,
             "last_edited_by_id": user_id,
             "properties": payload.properties or {},
@@ -332,12 +340,44 @@ class PageService(BaseService[Page]):
             values["database_schema"] = _default_database_schema()
             values["database_views"] = _default_database_views()
 
-        page = await self.repo.create(values)
+        for _attempt in range(SLOT_ATTEMPTS):
+            created = await self._create_once(payload, values, user_id=user_id)
+            if created is not None:
+                page, member = created
+                break
+        else:
+            raise DuplicateError(
+                detail="Could not allocate a page position; retry the request"
+            )
         self._log_entity(page.id)
         self._publish(
             payload.workspace_id, "page.created", actor_id=user_id, page_id=page.id
         )
         return await self._detail(page, member)
+
+    async def _create_once(
+        self, payload: PageCreate, values: dict[str, Any], *, user_id: uuid.UUID
+    ) -> tuple[Page, WorkspaceMember] | None:
+        """One create attempt; None when the position slot was taken.
+
+        Like a move attempt, this re-reads the membership: the failed slot
+        insert rolled the transaction back, which expires the session's
+        objects (async ORM objects cannot refresh themselves lazily).
+        """
+        member = await self.member_repo.get_membership(payload.workspace_id, user_id)
+        if member is None:
+            raise NotFoundError(detail=f"Workspace {payload.workspace_id} not found")
+        self._require_editor(member)
+        siblings = await self.repo.siblings(payload.workspace_id, payload.parent_id)
+        position = self._position_after(
+            siblings,
+            payload.after_id,
+            after_id_sent="after_id" in payload.model_fields_set,
+        )
+        page = await self.repo.create_in_slot({**values, "position": position})
+        if page is None:
+            return None
+        return page, member
 
     async def get_page(self, page_id: uuid.UUID, *, user_id: uuid.UUID) -> PageDetail:
         page, member = await self._access(page_id, user_id)
@@ -378,6 +418,37 @@ class PageService(BaseService[Page]):
         user_id: uuid.UUID,
         after_id_sent: bool = True,
     ) -> PageDetail:
+        """Move (and reorder) a page, retrying a taken sibling slot."""
+        for _attempt in range(SLOT_ATTEMPTS):
+            result = await self._move_once(
+                page_id,
+                parent_id,
+                after_id,
+                user_id=user_id,
+                after_id_sent=after_id_sent,
+            )
+            if result is not None:
+                return result
+        raise DuplicateError(
+            detail="Could not allocate a page position; retry the request"
+        )
+
+    async def _move_once(
+        self,
+        page_id: uuid.UUID,
+        parent_id: uuid.UUID | None,
+        after_id: uuid.UUID | None,
+        *,
+        user_id: uuid.UUID,
+        after_id_sent: bool,
+    ) -> PageDetail | None:
+        """One full move attempt; None when the target slot was taken.
+
+        An attempt restarts from the access checks on purpose: the failed
+        slot insert rolled the transaction back (releasing the row locks and
+        expiring its objects), and the cycle and trash checks must run again
+        under fresh locks anyway.
+        """
         page, member = await self._access(page_id, user_id)
         self._require_editor(member)
         if page.deleted_at is not None:
@@ -409,9 +480,9 @@ class PageService(BaseService[Page]):
             if sibling.id != page_id
         ]
         position = self._position_after(siblings, after_id, after_id_sent=after_id_sent)
-        updated = await self.repo.update(
-            page_id, {"parent_id": parent_id, "position": position}
-        )
+        updated = await self.repo.move_in_slot(page_id, parent_id, position)
+        if updated is None:
+            return None
         self._log_entity(page_id)
         self._publish(
             page.workspace_id, "page.moved", actor_id=user_id, page_id=page_id
