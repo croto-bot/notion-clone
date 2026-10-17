@@ -108,10 +108,6 @@ export function useCreatePage() {
   })
 }
 
-/** Sequence number of the newest update mutation per page: an older mutation's
- * response must never overwrite what a newer one already wrote to the cache. */
-const updateMutationClock = new Map<string, number>()
-
 /** The rows caches (one per database) that currently hold this row. */
 function rowsCachesHolding(
   queryClient: QueryClient,
@@ -123,30 +119,74 @@ function rowsCachesHolding(
     .map(([key]) => key)
 }
 
+/** Reads whose in-flight response could land over a write about to hit this
+ * page: its detail, its database's rows, every rows cache holding it. */
+async function cancelPageReads(queryClient: QueryClient, id: string) {
+  await queryClient.cancelQueries({ queryKey: ['pages', 'detail', id] })
+  const rowsKey = rowsKeyOf(queryClient, id)
+  if (rowsKey) await queryClient.cancelQueries({ queryKey: rowsKey })
+  for (const key of rowsCachesHolding(queryClient, id)) {
+    await queryClient.cancelQueries({ queryKey: key })
+  }
+}
+
+/** Updates to one page take turns: a queued update's PATCH waits for the
+ * previous update of that page to settle completely, so their requests and
+ * cache writes never interleave. The optimistic patch is not part of the turn
+ * (onMutate runs at call time): a slow first PATCH must not hold back the
+ * newer edit's paint. */
+const pageMutationTails = new Map<string, Promise<unknown>>()
+const pageMutationCounts = new Map<string, number>()
+
+const settledOf = (promise: Promise<unknown>) => promise.catch(() => undefined)
+
+/** True when an update of this page was called after this one: its paint is
+ * already on the caches, so this mutation's settle handlers must not write
+ * over it. Predecessors have fully settled (the PATCH waited for them), so
+ * more than one pending update always means a newer one. */
+function hasNewerPageMutation(pageId: string): boolean {
+  return (pageMutationCounts.get(pageId) ?? 0) > 1
+}
+
+/** Runs one update mutation of a page: the optimistic patch applies now, the
+ * request inside mutationFn waits for the previous update's full settle. */
+function runPageMutation<TData, TVariables extends { id: string }>(
+  mutation: { mutateAsync: (variables: TVariables & { wait: Promise<unknown> }) => Promise<TData> },
+  variables: TVariables
+): Promise<TData> {
+  const id = variables.id
+  pageMutationCounts.set(id, (pageMutationCounts.get(id) ?? 0) + 1)
+  const done = mutation.mutateAsync({
+    ...variables,
+    wait: settledOf(pageMutationTails.get(id) ?? Promise.resolve()),
+  })
+  const tail = settledOf(done)
+  pageMutationTails.set(id, tail)
+  void tail.then(() => {
+    if (pageMutationTails.get(id) === tail) pageMutationTails.delete(id)
+    const left = (pageMutationCounts.get(id) ?? 1) - 1
+    if (left <= 0) pageMutationCounts.delete(id)
+    else pageMutationCounts.set(id, left)
+  })
+  return done
+}
+
 export function useUpdatePage() {
   const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: UpdatePageData }) =>
-      api.patch<PageResponse>(API.PAGES.DETAIL(id), data),
+  const mutation = useMutation({
+    mutationFn: ({
+      id,
+      data,
+      wait,
+    }: { id: string; data: UpdatePageData } & { wait: Promise<unknown> }) =>
+      wait.then(() => api.patch<PageResponse>(API.PAGES.DETAIL(id), data)),
     onMutate: async ({ id, data }) => {
-      // Sequence this mutation: a slower older response is dropped in onSuccess.
-      const at = (updateMutationClock.get(id) ?? 0) + 1
-      updateMutationClock.set(id, at)
-      // Cancel in-flight reads first: a fetch that started before
-      // the change would resolve after the optimistic patch and clobber it
-      // (a filter or favorite that visibly "jumps back"). Row edits are cached
-      // under their database's rows key: cancel that query even when its data
-      // is not loaded (a fetch in flight would land over the patch), plus every
-      // rows cache that holds this row (the detail may not be cached).
-      await queryClient.cancelQueries({ queryKey: ['pages', 'detail', id] })
-      const rowsKey = rowsKeyOf(queryClient, id)
-      if (rowsKey) await queryClient.cancelQueries({ queryKey: rowsKey })
-      for (const key of rowsCachesHolding(queryClient, id)) {
-        await queryClient.cancelQueries({ queryKey: key })
-      }
-      // The list queries invalidatePageLists refetches (tree, favorites,
-      // recent, trash, search): one started before this change (a failed older
-      // mutation's repair) would land its older title over the newer patch.
+      // Cancel in-flight reads first: a fetch that started before the change
+      // would resolve after the optimistic patch and clobber it (a filter or
+      // favorite that visibly "jumps back"). The page lists are cancelled for
+      // the same reason: the repair refetch of an older update or an events
+      // flush would land its older title over the patch.
+      await cancelPageReads(queryClient, id)
       await cancelPageLists(queryClient)
       patchPageContent(queryClient, id, data)
       const patch: Parameters<typeof patchPageEverywhere>[2] = {}
@@ -154,31 +194,18 @@ export function useUpdatePage() {
       if (data.icon !== undefined) patch.icon = data.icon
       if (data.is_public !== undefined) patch.is_public = data.is_public
       if (Object.keys(patch).length > 0) patchPageEverywhere(queryClient, id, patch)
-      return { at }
     },
-    onSuccess: async (page, { id }, context) => {
+    onSuccess: async (page, { id }) => {
       // A read of this page that started before the server committed can
       // still be in flight (an events-driven invalidation raced the request);
       // its response would land right after this store and revert it. That is
       // the race that made the "Delete view" menu vanish mid-click: the views
       // list reverted, the popover's view unmounted under the pointer.
-      // Cancelling drops the stale fetch result; the mutation's own response
-      // is the freshest read, and the next event invalidation refetches.
-      await queryClient.cancelQueries({ queryKey: queryKeys.pages.detail(id) })
-      const rowsKey = rowsKeyOf(queryClient, id)
-      if (rowsKey) await queryClient.cancelQueries({ queryKey: rowsKey })
-      for (const key of rowsCachesHolding(queryClient, id)) {
-        await queryClient.cancelQueries({ queryKey: key })
-      }
-      // Re-check after the awaits: a mutation that started while they ran has
-      // already written its optimistic patch, and storing this (older) server
-      // response would revert it. Invalidate instead: the truth refetch is
-      // guaranteed, and the newer mutation's own handlers keep the order.
-      if (context && updateMutationClock.get(id) !== context.at) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.pages.detail(id) })
-        invalidateRowsOf(queryClient, id)
-        return
-      }
+      await cancelPageReads(queryClient, id)
+      // A newer update was called while this one was in flight: its paint is
+      // on the caches and its own settle writes the truth. Storing this older
+      // response would revert that paint, so this mutation writes nothing.
+      if (hasNewerPageMutation(id)) return
       storePageResponse(queryClient, page)
       // A row PATCH does not paint the server's merged properties into the
       // rows caches: the rows list refetches instead (the row it renders
@@ -186,21 +213,20 @@ export function useUpdatePage() {
       // same merge).
       invalidateRowsOf(queryClient, id, page.parent_id)
     },
-    onError: (_error, { id }, context) => {
-      // Only the newest mutation rolls the lists back: an older failed update
-      // must not refetch them over a newer optimistic patch (onMutate already
-      // cancelled the in-flight list reads, so the patch stays until the newer
-      // mutation answers). The page itself still refetches on every path: an
-      // optimistic patch that nothing reverts must not linger.
-      if (context && updateMutationClock.get(id) !== context.at) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.pages.detail(id) })
-        invalidateRowsOf(queryClient, id)
-        return
-      }
+    onError: (_error, { id }) => {
+      // The optimistic patch must not linger: the detail, the rows and every
+      // page list refetch the server's truth. When a newer update was called,
+      // its paint is live and its own handlers repair the caches; repairing
+      // here would refetch the older truth over that paint.
+      if (hasNewerPageMutation(id)) return
       void queryClient.invalidateQueries({ queryKey: queryKeys.pages.detail(id) })
+      invalidateRowsOf(queryClient, id)
       invalidatePageLists(queryClient)
     },
   })
+  const mutateAsync = (variables: { id: string; data: UpdatePageData }) =>
+    runPageMutation(mutation, variables)
+  return { ...mutation, mutateAsync }
 }
 
 interface TreeSnapshot {
@@ -304,11 +330,17 @@ export function usePurgePage() {
 
 export function useSetFavorite() {
   const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: ({ page, favorite }: { page: PageSummary; favorite: boolean }) =>
-      favorite
-        ? api.put<void>(API.PAGES.FAVORITE(page.id), {})
-        : api.delete(API.PAGES.FAVORITE(page.id)),
+  const mutation = useMutation({
+    mutationFn: ({
+      page,
+      favorite,
+      wait,
+    }: { page: PageSummary; favorite: boolean } & { wait: Promise<unknown> }) =>
+      wait.then(() =>
+        favorite
+          ? api.put<void>(API.PAGES.FAVORITE(page.id), {})
+          : api.delete(API.PAGES.FAVORITE(page.id))
+      ),
     onMutate: async ({ page, favorite }) => {
       await queryClient.cancelQueries({ queryKey: ['pages', 'favorites'] })
       // The detail cache holds is_favorite too; an in-flight fetch that
@@ -326,6 +358,10 @@ export function useSetFavorite() {
       return { snapshot }
     },
     onError: (_error, { page }, context) => {
+      // A newer mutation of this page was called: its paint is live and its
+      // own handlers repair the caches; restoring the older snapshot here
+      // would revert that paint.
+      if (hasNewerPageMutation(page.id)) return
       restoreLists(queryClient, context?.snapshot)
       void queryClient.invalidateQueries({ queryKey: queryKeys.pages.detail(page.id) })
     },
@@ -343,10 +379,19 @@ export function useSetFavorite() {
         return
       }
       await queryClient.cancelQueries({ queryKey: queryKeys.pages.detail(page.id) })
+      // A newer mutation of this page was called (a second toggle, an edit):
+      // its paint is live, and writing this toggle's settled value over it
+      // would flip it back. Checked after the cancel, right before the write.
+      if (hasNewerPageMutation(page.id)) return
       queryClient.setQueryData<PageResponse>(queryKeys.pages.detail(page.id), old =>
         old ? { ...old, is_favorite: favorite } : old
       )
       void queryClient.invalidateQueries({ queryKey: ['pages', 'favorites'] })
     },
   })
+  // Favorite toggles take the same per-page turns as updates: a toggle and an
+  // update of one page never interleave their requests or cache writes.
+  const mutateAsync = (variables: { page: PageSummary; favorite: boolean }) =>
+    runPageMutation(mutation, { id: variables.page.id, ...variables })
+  return { ...mutation, mutateAsync }
 }
