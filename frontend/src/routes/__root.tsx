@@ -66,7 +66,7 @@ export const Route = createRootRoute({
       {
         rel: 'icon',
         href: '/favicon.ico',
-        sizes: '32x32',
+        sizes: '16x16 32x32 48x48',
       },
     ],
     // Sets the theme class before the first paint, so a dark-theme user sees no white flash.

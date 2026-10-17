@@ -169,3 +169,17 @@ test.describe('sidebar resize handle (fix round 1)', () => {
     }
   })
 })
+
+test.describe('favicon (fix round 1)', () => {
+  test('adapts to dark tab bars and declares its ico sizes', async ({ page }) => {
+    const svg = await page.request.get('/favicon.svg')
+    expect(svg.ok()).toBeTruthy()
+    expect(await svg.text()).toContain('@media (prefers-color-scheme: dark)')
+
+    const response = await page.goto('/')
+    const html = await response?.text()
+    expect(html).toBeTruthy()
+    const head = html!.slice(0, html!.indexOf('</head>'))
+    expect(head).toContain('sizes="16x16 32x32 48x48"')
+  })
+})

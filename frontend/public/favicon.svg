@@ -1,8 +1,35 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!--
+    The document glyph flips for dark tab bars: dark ink on light chrome,
+    light ink on dark chrome. Favicons honor prefers-color-scheme inside the
+    SVG itself, so no markup outside this file is involved.
+  -->
+  <style>
+    .body {
+      fill: #37352f;
+    }
+    .fold {
+      fill: #f7f7f5;
+    }
+    .lines {
+      fill: #ffffff;
+    }
+    @media (prefers-color-scheme: dark) {
+      .body {
+        fill: #d3d6da;
+      }
+      .fold {
+        fill: #b9bec4;
+      }
+      .lines {
+        fill: #2f2f2f;
+      }
+    }
+  </style>
   <path
-    fill="#37352f"
+    class="body"
     d="M8.2 4.8h10.6L26.2 12.2V25.2a2.4 2.4 0 0 1-2.4 2.4H8.2a2.4 2.4 0 0 1-2.4-2.4V7.2a2.4 2.4 0 0 1 2.4-2.4z"
   />
-  <path fill="#f7f7f5" d="M18.6 5.1 25.6 12.1h-5.8a1.2 1.2 0 0 1-1.2-1.2V5.1z" />
-  <path fill="#fff" d="M11 16.2h8.4v1.8H11zm0 4.2h5.6v1.8H11z" />
+  <path class="fold" d="M18.6 5.1 25.6 12.1h-5.8a1.2 1.2 0 0 1-1.2-1.2V5.1z" />
+  <path class="lines" d="M11 16.2h8.4v1.8H11zm0 4.2h5.6v1.8H11z" />
 </svg>
