@@ -49,7 +49,7 @@ export function PropertyValueView({ property, value, members = [] }: PropertyVal
       )
     case 'date': {
       const date = toDate(value)
-      return date ? <span>{formatDateValue(date)}</span> : null
+      return date ? <span className="block min-w-0 truncate">{formatDateValue(date)}</span> : null
     }
     case 'number': {
       const number = toNumber(value)
@@ -62,11 +62,14 @@ export function PropertyValueView({ property, value, members = [] }: PropertyVal
       })
       if (people.length === 0) return null
       return (
-        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           {people.map(member => (
-            <span key={member.user_id} className="inline-flex items-center gap-1">
+            <span
+              key={member.user_id}
+              className="inline-flex max-w-full min-w-0 items-center gap-1"
+            >
               <Avatar name={displayNameOf(member)} seed={member.user_id} size={18} />
-              <span>{displayNameOf(member)}</span>
+              <span className="min-w-0 truncate">{displayNameOf(member)}</span>
             </span>
           ))}
         </span>
@@ -75,7 +78,7 @@ export function PropertyValueView({ property, value, members = [] }: PropertyVal
     case 'created_time':
     case 'last_edited_time': {
       const text = toText(value)
-      return text ? <span>{formatDateTime(text)}</span> : null
+      return text ? <span className="block min-w-0 truncate">{formatDateTime(text)}</span> : null
     }
     case 'url': {
       const text = toText(value)
