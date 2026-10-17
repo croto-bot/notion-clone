@@ -183,6 +183,102 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     await expect.poll(async () => (await getPage(api, user, note.id)).title).toBe('Fixed name')
   })
 
+  test('a refused first edit never replays an older title after the newer one', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    // The same back-to-back pair, watched frame by frame: the sidebar row
+    // records every title it ever shows, so even a one-frame revert (which
+    // polling would miss) is on the tape. Once both edits have settled, the
+    // recorded titles must never fall back to an older value again, and the
+    // server keeps what the user last typed. Same-page updates run one at a
+    // time, so the refused edit's repair refetch cannot land over the newer
+    // title once the newer edit has settled.
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Race me' })
+    await page.goto(`/p/${note.id}`)
+    const title = page.getByLabel('Page title')
+    await expect(title).toBeVisible({ timeout: 15_000 })
+    await expect(sidebar(page).locator(`[data-page-id="${note.id}"]`)).toBeVisible()
+
+    await page.evaluate(id => {
+      const row = document.querySelector(`[data-page-id="${id}"]`)
+      if (!row) throw new Error('sidebar row not found')
+      const label = () => row.querySelector('span.truncate')?.textContent ?? ''
+      const seen: string[] = [label()]
+      ;(window as typeof window & { __sidebarTitles: string[] }).__sidebarTitles = seen
+      new MutationObserver(() => {
+        const value = label()
+        if (value !== seen[seen.length - 1]) seen.push(value)
+      }).observe(row, { childList: true, characterData: true, subtree: true })
+    }, note.id)
+
+    // Both edits go through the real title input inside one page turn (native
+    // input + Enter events): the second mutation is called before the first
+    // PATCH can possibly answer, so the pair genuinely overlaps and the
+    // one-at-a-time order is what keeps every later write newer than the last.
+    await page.evaluate(() => {
+      const textarea = document.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="Page title"]'
+      )
+      if (!textarea) throw new Error('title input not found')
+      const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+      const type = (value: string) => {
+        setValue.call(textarea, value)
+        textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      const enter = () =>
+        textarea.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+        )
+      type('X'.repeat(5000))
+      enter()
+      type('Fixed name')
+      enter()
+    })
+
+    await expect(errorToast(page)).toHaveCount(1)
+    await expect(title).toHaveValue('Fixed name')
+    await expect(sidebarPage(page, 'Fixed name')).toBeVisible()
+    await expect.poll(async () => (await getPage(api, user, note.id)).title).toBe('Fixed name')
+
+    // Both edits have settled here: mark the tape, keep watching the sidebar
+    // for another second (the observer records every title it shows in that
+    // window, even a one-frame flash), then read the tape from the mark on.
+    const settledAt = await page.evaluate(
+      () => (window as typeof window & { __sidebarTitles?: string[] }).__sidebarTitles?.length ?? 0
+    )
+    await page.evaluate(
+      id =>
+        new Promise<void>(resolve => {
+          setTimeout(() => {
+            const row = document.querySelector(`[data-page-id="${id}"]`)
+            const state = window as typeof window & { __sidebarTitles?: string[] }
+            // Sample the label too: an observer-only window could miss a
+            // change that reverted and restored between mutations.
+            const value = row?.querySelector('span.truncate')?.textContent ?? ''
+            const seen = state.__sidebarTitles ?? []
+            if (value !== seen[seen.length - 1]) seen.push(value)
+            resolve()
+          }, 1000)
+        }),
+      note.id
+    )
+    expect((await getPage(api, user, note.id)).title).toBe('Fixed name')
+    await expect(sidebarPage(page, 'Fixed name')).toBeVisible()
+
+    const seen = await page.evaluate(
+      () => (window as typeof window & { __sidebarTitles?: string[] }).__sidebarTitles ?? []
+    )
+    const firstNewer = seen.indexOf('Fixed name')
+    expect(firstNewer, `sidebar showed ${JSON.stringify(seen)}`).toBeGreaterThanOrEqual(0)
+    expect(firstNewer, `sidebar showed ${JSON.stringify(seen)}`).toBeLessThan(settledAt)
+    for (let i = settledAt; i < seen.length; i++) {
+      expect(seen[i], `sidebar showed ${JSON.stringify(seen)}`).toBe('Fixed name')
+    }
+  })
+
   test('trashes a page, restores it, then deletes it forever', async ({
     authedPage: page,
     api,
