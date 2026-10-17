@@ -439,22 +439,13 @@ class PageService(BaseService[Page]):
         if page.deleted_at is not None:
             raise PageInTrashError()
         values: dict[str, Any] = payload.model_dump(exclude_unset=True)
-        if "properties" in values:
-            # A row's properties are merged per key so concurrent edits of
-            # different keys cannot overwrite each other: a key set to null
-            # removes it, and `properties: null` clears every key.
-            merged = dict(page.properties or {})
-            for key, value in (values["properties"] or {}).items():
-                if value is None:
-                    merged.pop(key, None)
-                else:
-                    merged[key] = value
-            values["properties"] = merged
         if values.get("is_public") and not page.public_id:
             values["public_id"] = secrets.token_urlsafe(12)
         values["last_edited_by_id"] = user_id
         values["last_edited_at"] = datetime.now(tz=UTC)
-        updated = await self.repo.update(page_id, values)
+        # ``properties`` stays the raw per-key patch: the repository merges it
+        # into the stored map inside one SQL statement.
+        updated = await self.repo.update_page(page_id, values)
         self._log_entity(page_id)
         self._publish(
             page.workspace_id, "page.updated", actor_id=user_id, page_id=page_id

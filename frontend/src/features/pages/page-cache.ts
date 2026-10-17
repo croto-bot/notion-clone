@@ -44,6 +44,11 @@ export function storePageResponse(queryClient: QueryClient, page: PageResponse) 
     updated_at: page.updated_at,
     last_edited_at: page.last_edited_at,
   })
+  // The server's merged properties are the truth for every rows cache holding
+  // this row (another member's key may have landed in the same merge).
+  queryClient.setQueriesData<PageResponse[]>({ queryKey: ['pages', 'rows'] }, rows =>
+    rows?.map(row => (row.id === page.id ? { ...row, properties: page.properties } : row))
+  )
 }
 
 /** Merges a per-key property patch into a row's stored properties (`null` removes the key). */

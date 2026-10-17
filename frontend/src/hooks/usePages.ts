@@ -110,6 +110,17 @@ export function useCreatePage() {
  * response must never overwrite what a newer one already wrote to the cache. */
 const updateMutationClock = new Map<string, number>()
 
+/** The rows caches (one per database) that currently hold this row. */
+function rowsCachesHolding(
+  queryClient: QueryClient,
+  rowId: string
+): readonly (readonly unknown[])[] {
+  return queryClient
+    .getQueriesData<PageResponse[]>({ queryKey: ['pages', 'rows'] })
+    .filter(([, rows]) => rows?.some(row => row.id === rowId))
+    .map(([key]) => key)
+}
+
 export function useUpdatePage() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -122,9 +133,12 @@ export function useUpdatePage() {
       // Cancel in-flight reads first: a fetch that started before
       // the change would resolve after the optimistic patch and clobber it
       // (a filter or favorite that visibly "jumps back"). Row edits are cached
-      // under the database's rows key, not the row's, so cancel the prefix.
+      // under their database's rows key: cancel only the caches that hold
+      // this row, not every database's rows query.
       await queryClient.cancelQueries({ queryKey: ['pages', 'detail', id] })
-      await queryClient.cancelQueries({ queryKey: ['pages', 'rows'] })
+      for (const key of rowsCachesHolding(queryClient, id)) {
+        await queryClient.cancelQueries({ queryKey: key })
+      }
       patchPageContent(queryClient, id, data)
       const patch: Parameters<typeof patchPageEverywhere>[2] = {}
       if (data.title !== undefined) patch.title = data.title
@@ -145,7 +159,9 @@ export function useUpdatePage() {
       // Cancelling drops the stale fetch result; the mutation's own response
       // is the freshest read, and the next event invalidation refetches.
       await queryClient.cancelQueries({ queryKey: queryKeys.pages.detail(id) })
-      await queryClient.cancelQueries({ queryKey: ['pages', 'rows'] })
+      for (const key of rowsCachesHolding(queryClient, id)) {
+        await queryClient.cancelQueries({ queryKey: key })
+      }
       // Re-check after the awaits: a mutation that started while they ran has
       // already written its optimistic patch, and storing this (older) server
       // response would revert it.

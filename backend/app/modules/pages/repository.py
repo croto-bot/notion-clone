@@ -1,10 +1,25 @@
 """Pages repository - database access layer."""
 
+import json
 import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import asc, case, delete, select, text, update
+from sqlalchemy import (
+    ARRAY,
+    Text,
+    asc,
+    case,
+    cast,
+    delete,
+    func,
+    literal,
+    literal_column,
+    select,
+    text,
+    update,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.modules.pages.models import Page, PageFavorite, PageKind, PageVisit
@@ -284,6 +299,37 @@ class PageRepository(SQLAlchemyRepository[Page]):
         result = await self._session.execute(statement)
         await self._session.commit()
         return list(result.scalars().all())
+
+    @SQLAlchemyRepository.translate_commit_errors
+    async def update_page(self, page_id: uuid.UUID, values: dict[str, Any]) -> Page:
+        """UPDATE the row; ``values["properties"]`` merges per key in SQL.
+
+        One statement (``properties = (coalesce(properties, '{}') || patch)
+        - null_keys``) instead of a read-merge-write in Python: two concurrent
+        PATCHes of different keys both apply (the row lock serializes the
+        statements, and each only touches its own keys). A key set to null in
+        the patch removes exactly that key; there is no clear-all (the schema
+        rejects ``properties: null`` with 422).
+        """
+        columns = {key: value for key, value in values.items() if key != "properties"}
+        patch = values.get("properties")
+        if patch is not None:
+            merged = func.coalesce(Page.properties, literal_column("'{}'::jsonb")).op(
+                "||"
+            )(cast(literal(json.dumps(patch)), JSONB))
+            null_keys = sorted(key for key, value in patch.items() if value is None)
+            if null_keys:
+                merged = merged.op("-")(cast(literal(null_keys), ARRAY(Text)))
+            columns["properties"] = merged
+        statement = (
+            update(Page).where(Page.id == page_id).values(**columns).returning(Page)
+        )
+        result = await self._session.execute(statement)
+        await self._session.commit()
+        row = result.scalar_one_or_none()
+        if row is None:
+            raise NotFoundError(detail=f"Page {page_id} not found")
+        return row
 
     async def set_document(
         self,
