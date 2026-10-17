@@ -72,7 +72,7 @@ const METRICS = {
   menuItemHeight: 28,
   menuRadius: 6,
   slashMenu: { width: 324, itemHeight: 28, iconSize: 20 },
-  toolbarButtonHeight: 28,
+  toolbarButton: 28,
   quickFindWidth: 755,
   settings: { width: 1150, height: 715 },
   databaseRowHeight: 33,
@@ -490,9 +490,14 @@ for (const theme of ['light', 'dark'] as const) {
       await expectMenuChrome(toolbar, theme, 'formatting toolbar')
       near(
         (await box(toolbar.locator('button').first())).height,
-        METRICS.toolbarButtonHeight,
-        'toolbar button height'
+        METRICS.toolbarButton,
+        'toolbar select height'
       )
+      for (const name of ['Bold', 'Italic', 'Underline', 'Strike']) {
+        const buttonBox = await box(toolbar.getByRole('button', { name, exact: true }))
+        near(buttonBox.width, METRICS.toolbarButton, `${name} button width`)
+        near(buttonBox.height, METRICS.toolbarButton, `${name} button height`)
+      }
       await shoot(page, 'formatting-toolbar', theme)
       await page.keyboard.press('Escape')
 

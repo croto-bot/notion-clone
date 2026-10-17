@@ -409,6 +409,11 @@
   border-radius: 4px;
   color: var(--foreground);
 }
+/* Mantine sets the icon button width from an inline --ai-size (30px), not from its height. */
+.nx-editor .bn-toolbar .mantine-ActionIcon-root {
+  width: 28px;
+  min-width: 28px;
+}
 .nx-editor .bn-toolbar .mantine-Button-root:hover,
 .nx-editor .bn-toolbar .mantine-Button-root[data-active] {
   background: var(--hover-strong);
