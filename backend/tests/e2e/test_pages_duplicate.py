@@ -7,11 +7,20 @@ from typing import TYPE_CHECKING
 
 from pycrdt import Doc, XmlFragment
 
-from tests.e2e.helpers import create_page, create_workspace, doc_with_text
+from tests.e2e.helpers import (
+    assert_error,
+    create_page,
+    create_workspace,
+    doc_with_text,
+    make_member,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import httpx
 
+    from tests.e2e.helpers import RegisteredUser
     from tests.e2e.stack import Database
 
 
@@ -119,3 +128,18 @@ def test_duplicate_skips_trashed_children(
     # parent, trashed child + grandchild, and the copy: nothing else
     assert db.fetch_one("SELECT count(*) FROM pages")[0] == 4
     assert db.fetch_one("SELECT count(*) FROM pages WHERE deleted_at IS NULL")[0] == 2
+
+
+def test_viewer_cannot_duplicate_pages(
+    auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
+) -> None:
+    """Review finding 13: the viewer-write paths need their own tests."""
+    workspace = create_workspace(auth_client)
+    viewer = make_member(register_user, auth_client, workspace["id"], role="viewer")
+    page = create_page(auth_client, workspace["id"], title="Only once")
+
+    response = viewer.client.post(f"/pages/{page['id']}/duplicate")
+
+    assert_error(response, 403, "forbidden")
+    tree = auth_client.get(f"/workspaces/{workspace['id']}/page-tree").json()
+    assert [p["title"] for p in tree] == ["Only once"]

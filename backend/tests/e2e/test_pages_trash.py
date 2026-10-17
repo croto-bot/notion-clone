@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from tests.e2e.helpers import assert_error, create_page, create_workspace
+from tests.e2e.helpers import (
+    assert_error,
+    create_page,
+    create_workspace,
+    make_member,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -137,8 +142,6 @@ def test_purge_only_trashed_pages(auth_client: httpx.Client) -> None:
 def test_viewer_cannot_trash_or_restore(
     auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
 ) -> None:
-    from tests.e2e.helpers import make_member
-
     workspace = create_workspace(auth_client)
     viewer = make_member(register_user, auth_client, workspace["id"], role="viewer")
     page = create_page(auth_client, workspace["id"])
@@ -233,3 +236,18 @@ def test_purge_keeps_a_separately_trashed_child(
     trash = auth_client.get(f"/workspaces/{workspace['id']}/trash").json()
     assert [page["title"] for page in trash] == ["Child"]
     assert db.fetch_one("SELECT count(*) FROM pages")[0] == 2
+
+
+def test_viewer_cannot_purge_pages(
+    auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
+) -> None:
+    """Review finding 13: the viewer-write paths need their own tests."""
+    workspace = create_workspace(auth_client)
+    viewer = make_member(register_user, auth_client, workspace["id"], role="viewer")
+    page = create_page(auth_client, workspace["id"])
+    auth_client.delete(f"/pages/{page['id']}")
+
+    response = viewer.client.delete(f"/pages/{page['id']}/permanent")
+
+    assert_error(response, 403, "forbidden")
+    assert auth_client.get(f"/pages/{page['id']}").json()["deleted_at"] is not None

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from tests.e2e.helpers import assert_error, create_page, create_workspace
+from tests.e2e.helpers import (
+    assert_error,
+    create_page,
+    create_workspace,
+    make_member,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -118,7 +123,9 @@ def test_move_in_a_cycled_tree_is_invalid_not_a_hang(
     b = create_page(auth_client, workspace["id"], parent_id=a["id"], title="B")
     c = create_page(auth_client, workspace["id"], title="C")
     # B is under A; force A under B: the tree is now the cycle A -> B -> A.
-    assert db.execute("UPDATE pages SET parent_id = %s WHERE id = %s", (b["id"], a["id"]))
+    assert db.execute(
+        "UPDATE pages SET parent_id = %s WHERE id = %s", (b["id"], a["id"])
+    )
 
     assert_error(
         auth_client.post(f"/pages/{b['id']}/move", json={"parent_id": a["id"]}),
@@ -187,3 +194,17 @@ def test_create_under_another_workspaces_parent_is_404(
     )
 
     assert_error(response, 404, "not_found")
+
+
+def test_viewer_cannot_move_pages(
+    auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
+) -> None:
+    """Review finding 13: the viewer-write paths need their own tests."""
+    workspace = create_workspace(auth_client)
+    viewer = make_member(register_user, auth_client, workspace["id"], role="viewer")
+    page = create_page(auth_client, workspace["id"], title="Stays")
+
+    response = viewer.client.post(f"/pages/{page['id']}/move", json={"parent_id": None})
+
+    assert_error(response, 403, "forbidden")
+    assert auth_client.get(f"/pages/{page['id']}").json()["parent_id"] is None

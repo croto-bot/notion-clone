@@ -274,3 +274,17 @@ def test_has_children_ignores_trashed_children(auth_client: httpx.Client) -> Non
     assert auth_client.delete(f"/pages/{child['id']}").status_code == 204
 
     assert auth_client.get(f"/pages/{parent['id']}").json()["has_children"] is False
+
+
+def test_viewer_cannot_patch_pages(
+    auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
+) -> None:
+    """Review finding 13: the viewer-write paths need their own tests."""
+    workspace = create_workspace(auth_client)
+    viewer = make_member(register_user, auth_client, workspace["id"], role="viewer")
+    page = create_page(auth_client, workspace["id"], title="Original")
+
+    response = viewer.client.patch(f"/pages/{page['id']}", json={"title": "X"})
+
+    assert_error(response, 403, "forbidden")
+    assert auth_client.get(f"/pages/{page['id']}").json()["title"] == "Original"
