@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { COVER_PRESETS } from '@/lib/colors'
+import { COVER_PRESETS, isRenderableCover } from '@/lib/colors'
 import { cn } from '@/lib/utils'
 
 interface CoverPickerProps {
@@ -16,9 +16,10 @@ type Tab = 'gallery' | 'link'
 export function CoverPicker({ current, onSelect, onRemove }: CoverPickerProps) {
   const [tab, setTab] = useState<Tab>('gallery')
   const [url, setUrl] = useState('')
-  // The backend accepts presets and https URLs only; refuse the rest here so
-  // the picker never offers a submit the server would reject.
-  const validUrl = /^https:\/\/\S+$/i.test(url.trim())
+  // The same rule the backend enforces (and coverBackground renders): a
+  // preset key or an https URL with a host. The picker never offers a submit
+  // the server would reject.
+  const validUrl = isRenderableCover(url.trim())
 
   return (
     <div className="w-[400px]">

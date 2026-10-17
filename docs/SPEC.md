@@ -40,7 +40,7 @@ All tables: `uuid` PK, `TimestampMixin` (`created_at`, `updated_at`).
 - **pages**:
   - `workspace_id` (FK, cascade), `parent_id` (FK pages, cascade, null = root)
   - `kind` (`StrEnum`: `page` | `database`)
-  - `title` (str, default `""`), `icon` (str | null), `cover` (str | null: an https image URL or a preset key: `gradient-1`…`gradient-6`, `color-red|orange|yellow|green|blue|purple`; anything else is a 422), `cover_position` (int 0..100, default 50)
+  - `title` (str, default `""`), `icon` (str | null), `cover` (str | null: a preset key `gradient-1`…`gradient-6`, `color-red|orange|yellow|green|blue|purple`, or a URL that parses with scheme exactly https and a non-empty host; both sides use the same rule — `HTTPS://` is accepted like `https://`, while `https://` (no host) and `https://not a url` are 422s; the client renders the cover band by the same rule, so an unrenderable stored value renders no band), `cover_position` (int 0..100, default 50)
   - `position` (str, fractional index for ordering among siblings; the backend computes it)
   - `full_width`, `small_text`, `locked` (bool, default false), `font` (`default` | `serif` | `mono`)
   - `is_public` (bool), `public_id` (str | null, unique, url-safe random, set when published first)

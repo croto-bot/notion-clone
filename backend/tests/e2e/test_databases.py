@@ -239,12 +239,20 @@ def test_page_options_can_be_updated(auth_client: httpx.Client) -> None:
 
 def test_cover_must_be_a_preset_or_an_https_url(auth_client: httpx.Client) -> None:
     """The cover lands in a CSS background: only the picker's preset keys and
-    https image URLs are accepted (422 otherwise), so no other scheme or
-    arbitrary string ships into the page."""
+    URLs that parse with scheme https and a non-empty host are accepted (422
+    otherwise), so no other scheme or arbitrary string ships into the page.
+    Both parsers lowercase the scheme, so "HTTPS://" is accepted like the
+    client's new URL() accepts it."""
     workspace = create_workspace(auth_client)
     page = create_page(auth_client, workspace["id"])
 
-    for bad in ("http://cdn.example.com/bg.png", "javascript:alert(1)", "gradient-7"):
+    for bad in (
+        "http://cdn.example.com/bg.png",
+        "javascript:alert(1)",
+        "gradient-7",
+        "https://",  # a scheme alone is not a URL: no host
+        "https://not a url",  # a hostname with whitespace is not a URL
+    ):
         body = assert_error(
             auth_client.patch(f"/pages/{page['id']}", json={"cover": bad}),
             422,
@@ -254,6 +262,12 @@ def test_cover_must_be_a_preset_or_an_https_url(auth_client: httpx.Client) -> No
 
     kept = auth_client.get(f"/pages/{page['id']}").json()
     assert kept["cover"] is None
+
+    upper = auth_client.patch(
+        f"/pages/{page['id']}", json={"cover": "HTTPS://cdn.example.com/bg.png"}
+    )
+    assert upper.status_code == 200
+    assert upper.json()["cover"] == "HTTPS://cdn.example.com/bg.png"
 
     for good in ("gradient-1", "https://cdn.example.com/bg.png"):
         saved = auth_client.patch(f"/pages/{page['id']}", json={"cover": good}).json()

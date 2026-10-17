@@ -67,6 +67,28 @@ export const COVER_PRESETS = [
   { key: 'color-purple', label: 'Purple', css: '#6940a5' },
 ] as const
 
+/** One rule, both sides of the wire: a cover is a preset key, or a URL that
+ * parses with scheme exactly https and a non-empty host — the same check the
+ * backend runs with urllib.parse. Both parsers lowercase the scheme, so
+ * `HTTPS://` is accepted; `https://` (no host) and `https://not a url` are
+ * not URLs on either side. */
+export function isRenderableCover(cover: string | null | undefined): boolean {
+  if (!cover) return false
+  if (COVER_PRESETS.some(item => item.key === cover)) return true
+  // The host part of the raw value must be whitespace-free: Chromium would
+  // percent-encode a space into the parsed hostname ("not%20a%20url"), so the
+  // check runs on the input, matching the server's hostname rule.
+  const afterScheme = cover.slice(cover.indexOf('://') + 3)
+  const host = afterScheme.split(/[/?#]/)[0]
+  if (/\s/.test(host)) return false
+  try {
+    const url = new URL(cover)
+    return url.protocol === 'https:' && url.hostname !== ''
+  } catch {
+    return false
+  }
+}
+
 /** CSS `background` for a page cover: a preset key or an https image URL.
  * Anything else (a stale value, another scheme) renders no background. */
 export function coverBackground(
@@ -78,7 +100,7 @@ export function coverBackground(
   | undefined {
   const preset = COVER_PRESETS.find(item => item.key === cover)
   if (preset) return { background: preset.css }
-  if (!cover.startsWith('https://')) return undefined
+  if (!isRenderableCover(cover)) return undefined
   return {
     backgroundImage: `url("${cover.replace(/"/g, '%22')}")`,
     backgroundSize: 'cover',

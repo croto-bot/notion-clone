@@ -9,7 +9,7 @@ import { usePageEditorApi } from '@/contexts/PageEditorContext'
 import { usePageActions } from '@/hooks/usePageActions'
 import { patchPageEverywhere } from '@/features/pages/page-cache'
 import { randomEmoji } from '@/features/emoji/emoji-data'
-import { coverBackground } from '@/lib/colors'
+import { COVER_PRESETS, coverBackground, isRenderableCover } from '@/lib/colors'
 import { consumeTitleFocus } from '@/lib/title-focus'
 import { cn } from '@/lib/utils'
 import type { PageResponse } from '@/types/page'
@@ -29,9 +29,11 @@ function Cover({ page, editable }: { page: PageResponse; editable: boolean }) {
   const repositioning = dragPosition !== null
   const position = dragPosition ?? page.cover_position
   const box = useRef<HTMLDivElement>(null)
-  const isImage = !!page.cover && page.cover.startsWith('https://')
+  const isImage =
+    isRenderableCover(page.cover) && !COVER_PRESETS.some(item => item.key === page.cover)
 
-  if (!page.cover) return null
+  // No renderable cover (none, or a value from before the rule): no band.
+  if (!page.cover || !isRenderableCover(page.cover)) return null
 
   const startDrag = (event: React.PointerEvent) => {
     if (!repositioning || !box.current) return

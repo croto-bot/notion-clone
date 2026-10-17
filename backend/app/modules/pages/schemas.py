@@ -3,6 +3,7 @@
 import uuid
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -117,7 +118,20 @@ class PageUpdate(BaseModel):
     @field_validator("cover")
     @classmethod
     def cover_is_a_preset_or_an_https_url(cls, value: str | None) -> str | None:
-        if value is None or value in COVER_PRESET_KEYS or value.startswith("https://"):
+        # One rule with the client's check: a preset key, or a URL that parses
+        # with scheme exactly https and a non-empty, whitespace-free host
+        # (both parsers lowercase the scheme, so "HTTPS://" passes on both
+        # sides; "https://" has no host; Chromium would percent-encode the
+        # space in "https://not a url" into a broken hostname, so the client
+        # checks the raw host part and the server refuses the whitespace).
+        if value is None or value in COVER_PRESET_KEYS:
+            return value
+        parsed = urlparse(value)
+        if (
+            parsed.scheme == "https"
+            and parsed.hostname
+            and not any(char.isspace() for char in parsed.hostname)
+        ):
             return value
         raise ValueError("cover must be a preset key or an https URL")
 

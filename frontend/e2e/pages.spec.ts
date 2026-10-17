@@ -326,13 +326,28 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     await expect(submit).toBeDisabled()
     await link.fill('javascript:alert(1)')
     await expect(submit).toBeDisabled()
-    await link.fill('https://cdn.example.com/bg.png')
+    // One rule on both sides of the wire: no host and not-a-URL hostnames
+    // are refused here exactly like the server refuses them (422).
+    await link.fill('https://')
+    await expect(submit).toBeDisabled()
+    await link.fill('https://not a url')
+    await expect(submit).toBeDisabled()
+    // Both parsers lowercase the scheme: an uppercase https URL is a valid
+    // cover end to end, and the band renders it.
+    await link.fill('HTTPS://cdn.example.com/bg.png')
     await expect(submit).toBeEnabled()
     await submit.click()
     await expect(page.getByTestId('page-cover')).toBeVisible()
+    // The band really carries the image URL as its background (the browser
+    // may normalize the case when reporting the computed style).
+    await expect
+      .poll(async () =>
+        page.getByTestId('page-cover').evaluate(el => getComputedStyle(el).backgroundImage)
+      )
+      .toMatch(/cdn\.example\.com\/bg\.png/i)
     await expect
       .poll(async () => (await getPage(api, user, note.id)).cover)
-      .toBe('https://cdn.example.com/bg.png')
+      .toBe('HTTPS://cdn.example.com/bg.png')
 
     await page.getByTestId('page-cover').hover()
     await page.getByRole('button', { name: 'Change cover' }).click()
