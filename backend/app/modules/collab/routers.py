@@ -77,12 +77,12 @@ async def collab_socket(
         channel = ReadOnlyChannel(base)
     else:
         # Write access is re-checked on every push: trash or a demotion that
-        # happens after connect takes effect from the next message on.
-        channel = GuardedChannel(
-            WriteTrackingChannel(
-                base, lambda: collab_server.note_write(page_id, user.id)
-            ),
-            lambda: collab_server.may_write(page_id, user.id),
+        # happens after connect takes effect from the next message on. The
+        # guard sits inside the tracker, so a dropped push never credits its
+        # sender as the page's last editor.
+        channel = WriteTrackingChannel(
+            GuardedChannel(base, lambda: collab_server.may_write(page_id, user.id)),
+            lambda: collab_server.note_write(page_id, user.id),
         )
 
     try:

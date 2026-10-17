@@ -421,3 +421,42 @@ def test_demotion_while_socket_open_stops_the_writes(
     text = _doc_text(stored_doc)
     assert "as an editor" in text
     assert "typed as a viewer" not in text
+
+
+# --- last_edited_by names only real document updates (review finding 8) ---------
+
+
+def test_merely_opening_the_page_does_not_take_over_last_edited_by(
+    server: LiveServer,
+    auth_client: httpx.Client,
+    register_user: Callable[..., RegisteredUser],
+) -> None:
+    """``last_edited_by`` is the user who last sent a document update.
+
+    A second editor's initial sync (asking for the document, answering with
+    an empty state) is not a document update: the flush must still credit
+    the user who typed.
+    """
+    workspace = create_workspace(auth_client)
+    other_editor = make_member(
+        register_user, auth_client, workspace["id"], role="editor"
+    )
+    page = create_page(auth_client, workspace["id"])
+    owner_url = _collab_url(server, page["id"], _token_of(auth_client))
+    other_url = _collab_url(server, page["id"], other_editor.session_id)
+    owner_id = auth_client.get("/users/me").json()["id"]
+
+    with connect(owner_url, open_timeout=5) as conn_a:
+        doc_a, _ = doc_with_text()
+        yjs_sync(conn_a, doc_a)
+        _edit(doc_a, "typed by the owner")
+        yjs_send_update(conn_a, doc_a)
+        yjs_wait_for(conn_a, doc_a, "typed by the owner")
+        with connect(other_url, open_timeout=5) as conn_b:  # the mere open
+            doc_b, _ = doc_with_text()
+            yjs_sync(conn_b, doc_b)
+            yjs_wait_for(conn_b, doc_b, "typed by the owner")
+    time.sleep(FLUSH_WAIT_S)  # the debounce flush runs after B's sync
+
+    detail = auth_client.get(f"/pages/{page['id']}").json()
+    assert detail["last_edited_by"]["id"] == owner_id

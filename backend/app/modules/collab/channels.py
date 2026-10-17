@@ -13,11 +13,31 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 from anyio import Lock
-from pycrdt import YMessageType, YSyncMessageType
+from pycrdt import YMessageType, YSyncMessageType, read_message
 from starlette.websockets import WebSocketDisconnect
 
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
+
+# pycrdt ignores update payloads of exactly these bytes (an empty state
+# vector diff): such a push changes nothing, so it is not a document update.
+_EMPTY_UPDATE = b"\x00\x00"
+
+
+def _carries_update(message: bytes) -> bool:
+    """Whether this client message is a state push the server will apply.
+
+    Sync step 2 and update messages with a non-empty payload are document
+    updates; sync step 1 only asks for the document, and an empty payload
+    carries no changes (pycrdt skips it too)."""
+    if message[0] != int(YMessageType.SYNC):
+        return False
+    if message[1] not in (
+        int(YSyncMessageType.SYNC_STEP2),
+        int(YSyncMessageType.SYNC_UPDATE),
+    ):
+        return False
+    return read_message(message[2:]) != _EMPTY_UPDATE
 
 
 class Channel(Protocol):
@@ -97,7 +117,7 @@ class ReadOnlyChannel:
 
 
 class WriteTrackingChannel:
-    """Marks the page edited on every document message this client sends."""
+    """Marks the page edited on every document update this client sends."""
 
     def __init__(self, inner: Channel, on_write) -> None:  # noqa: ANN001 (callback)
         self._inner = inner
@@ -112,7 +132,7 @@ class WriteTrackingChannel:
 
     async def recv(self) -> bytes:
         message = await self._inner.recv()
-        if message[0] == int(YMessageType.SYNC):
+        if _carries_update(message):
             self._on_write()
         return message
 
