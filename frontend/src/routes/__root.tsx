@@ -58,10 +58,19 @@ export const Route = createRootRoute({
         rel: 'stylesheet',
         href: appCss,
       },
+      // Dark ink for light tab bars, light ink for dark ones. The fills are
+      // hardcoded per file: some browsers ignore media queries inside a favicon.
       {
         rel: 'icon',
-        href: '/favicon.svg',
+        href: '/favicon-light.svg',
         type: 'image/svg+xml',
+        media: '(prefers-color-scheme: light)',
+      },
+      {
+        rel: 'icon',
+        href: '/favicon-dark.svg',
+        type: 'image/svg+xml',
+        media: '(prefers-color-scheme: dark)',
       },
       {
         rel: 'icon',

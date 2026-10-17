@@ -170,16 +170,31 @@ test.describe('sidebar resize handle (fix round 1)', () => {
   })
 })
 
-test.describe('favicon (fix round 1)', () => {
-  test('adapts to dark tab bars and declares its ico sizes', async ({ page }) => {
-    const svg = await page.request.get('/favicon.svg')
-    expect(svg.ok()).toBeTruthy()
-    expect(await svg.text()).toContain('@media (prefers-color-scheme: dark)')
-
+test.describe('favicon (fix round 2)', () => {
+  test('picks a light or dark SVG by the color scheme and keeps the ico', async ({ page }) => {
     const response = await page.goto('/')
     const html = await response?.text()
     expect(html).toBeTruthy()
     const head = html!.slice(0, html!.indexOf('</head>'))
-    expect(head).toContain('sizes="16x16 32x32 48x48"')
+    const icons = [...head.matchAll(/<link[^>]*rel="icon"[^>]*>/g)].map(match => match[0])
+
+    const fills: Record<string, string> = {}
+    for (const scheme of ['light', 'dark']) {
+      const link = icons.find(tag => tag.includes(`media="(prefers-color-scheme: ${scheme})"`))
+      expect(link, `an icon link for ${scheme} chrome`).toBeTruthy()
+      expect(link).toContain('type="image/svg+xml"')
+      const href = /href="([^"]+)"/.exec(link!)![1]
+      const svg = await page.request.get(href)
+      expect(svg.ok(), href).toBeTruthy()
+      const body = await svg.text()
+      // Hardcoded fills: browsers that ignore media queries inside a favicon still get the right ink.
+      expect(body).not.toContain('@media')
+      fills[scheme] = /fill="(#[0-9a-f]{6})"/i.exec(body)![1]
+    }
+    expect(fills.light).not.toBe(fills.dark)
+
+    const ico = icons.find(tag => tag.includes('href="/favicon.ico"'))
+    expect(ico).toContain('sizes="16x16 32x32 48x48"')
+    expect((await page.request.get('/favicon.ico')).ok()).toBeTruthy()
   })
 })
