@@ -1,14 +1,63 @@
-# Full-Stack App
+# Noted
 
-FastAPI backend + React 19 frontend (TanStack Start) + PostgreSQL 18.1, run with Docker Compose.
+Noted is an open-source Notion alternative. Write in a block editor with your team in real time, organize pages in a tree, track work in databases, and publish any page to the web. It runs on your own machine with one `docker compose` command.
+
+Noted is built on [agusmdev/fullstack-ai-template](https://github.com/agusmdev/fullstack-ai-template): a FastAPI backend, a React 19 frontend (TanStack Start) and PostgreSQL 18.1.
+
+## Demo
+
+Click a preview to play the full video (1920x1080).
+
+| | |
+|---|---|
+| [![Tour of Noted](docs/media/tour.gif)](docs/media/tour.mp4) | **Tour.** Sign in, move pages in the sidebar, write with the slash menu and the formatting toolbar, find a page with `Ctrl+K`, and switch to dark mode. |
+| [![Two people editing one page](docs/media/collaboration.gif)](docs/media/collaboration.mp4) | **Collaboration.** Two people type in the same page and see each other's cursors, names, and new pages as they happen. |
+| [![Databases](docs/media/databases.gif)](docs/media/databases.mp4) | **Databases.** Add a row and a property, filter and sort a table, drag a card on a board, and open a row as a page. |
+| [![Share and trash](docs/media/share.gif)](docs/media/share.mp4) | **Share and trash.** Publish a page, read it signed out, then delete pages and get them back with Undo and the Trash. |
+
+`make demo-videos` records these videos again (see [Record the demo videos](#record-the-demo-videos)).
+
+## Features
+
+The full product contract is [docs/SPEC.md](docs/SPEC.md). In short:
+
+1. **Accounts.** Sign up, log in and log out with an email and a password, or with Google.
+2. **Workspaces.** Each person can have many workspaces. Switch between them from the sidebar, and rename them or give them an emoji.
+3. **Members and roles.** Invite people by email as an owner, an editor or a viewer. Viewers can read but not change anything.
+4. **Page tree.** Nest pages inside pages. Give each one an emoji and a cover. Reorder and move pages with drag and drop, or duplicate them with everything inside.
+5. **Block editor.** Type `/` for headings, lists, to-dos, toggles, quotes, callouts, code, tables, images and links to other pages. Markdown shortcuts and a formatting toolbar also work.
+6. **Real-time collaboration.** Everyone on a page sees the same text as it changes, with each person's cursor, name and avatar. Edits made offline merge when you reconnect.
+7. **Live sidebar.** New, renamed, moved and deleted pages show up for every member at once.
+8. **Trash.** A deleted page goes to the Trash with all its children. Undo from the toast, restore from the Trash, or delete forever.
+9. **Favorites.** Star a page to pin it to the top of your sidebar.
+10. **Search.** `Ctrl+K` (or `Cmd+K`) finds pages by title and by text, and shows recent pages before you type.
+11. **Home.** A greeting and your recently visited pages.
+12. **Page options.** Full width, small text, three fonts, lock, copy link, duplicate, move, and Markdown import and export.
+13. **Share and publish.** Invite members from the page, or publish the page to a public link that anyone can read without an account.
+14. **Comments.** Discuss a page: reply, edit, resolve and reopen. Comments update live.
+15. **Databases.** Tables, boards, lists and galleries of rows, where each row is also a page. Eleven property types, plus sort, filter and hidden properties per view.
+16. **Appearance.** Light, dark or system theme (`Ctrl+Shift+L`). The sidebar collapses (`Ctrl+\`) and resizes.
+17. **Settings.** Your name, the theme, the workspace and its members, in one dialog.
+18. **Landing page.** A short public page at `/` for people who are not signed in.
+
+## Quick start
+
+```bash
+git clone https://github.com/croto-bot/notion-clone.git noted && cd noted
+docker compose up -d --build
+```
+
+Open http://localhost:3000 and create an account. The API is on http://localhost:9095 (docs at `/docs`). To develop with hot reload, or to change the ports, read the sections below.
 
 | Part | Stack | Docs |
 |---|---|---|
 | `backend/` | Python 3.12, FastAPI, SQLAlchemy 2 (async), Alembic, Pydantic 2, uv | [backend/AGENTS.md](backend/AGENTS.md) |
-| `frontend/` | React 19, TanStack Start/Router/Query, Tailwind v4, shadcn/ui, bun | [frontend/AGENTS.md](frontend/AGENTS.md) |
+| `frontend/` | React 19, TanStack Start/Router/Query, Tailwind v4, shadcn/ui, BlockNote, Yjs, bun | [frontend/AGENTS.md](frontend/AGENTS.md) |
 | `db` | PostgreSQL 18.1 (`postgres:18.1-alpine`) | `docker-compose.yml` |
 
-Included: session auth (register, login, logout, password reset, email verification, Google OAuth), the Notion-clone feature set (workspaces with roles, a nested page tree with trash and favorites, databases with rows, comments, published public pages, real-time collaboration over WebSocket y-websocket, live workspace events), structured request logging, and two end-to-end test suites.
+## Testing
+
+Every test drives the real system: there are no unit tests and no mocks. The backend suite sends HTTP and WebSocket requests to a live server on a real Postgres. The browser suite runs Playwright against the real frontend, backend and database, including two people editing one page. `make test` runs both suites, and [Tests](#tests) has the details.
 
 **Working with an AI agent?** It starts at [AGENTS.md](AGENTS.md). Code standards for agents and people: `.claude/skills/project-standards/SKILL.md`.
 
@@ -115,6 +164,18 @@ make ci               # check + test
 First Playwright run: `cd frontend && bunx playwright install --with-deps chromium`. The suites use their own ports (55432, 59095, 53000) and never touch the dev stack. The e2e frontend turns off the TanStack devtools event bus (fixed port 42069), so `bun run dev` can stay up.
 
 Where tests go and how to write them: [AGENTS.md](AGENTS.md#testing-end-to-end-only) and `.claude/skills/project-standards/references/e2e-testing.md`.
+
+## Record the demo videos
+
+`make demo-videos` records the four videos in `docs/media/` again. It needs Docker, uv, ffmpeg, Node 22.18 or later (Node runs the TypeScript recorder directly), and the frontend dependencies with Chromium (`cd frontend && bun install && bunx playwright install chromium`).
+
+The target does three things:
+
+1. `scripts/demo/stack.sh up` starts a separate stack: Postgres in a container named `noted-demo-db` (port 57732, data in memory), the backend (port 57195), and a production build of the frontend (port 57400). Set `DEMO_DB_PORT`, `DEMO_BACKEND_PORT` or `DEMO_FRONTEND_PORT` to use other ports.
+2. `node scripts/demo/record.ts` seeds a demo workspace through the API before each video, films Chromium at 1920x1080, and writes `docs/media/<video>.mp4` (H.264) and `docs/media/<video>.gif` (the first 8 seconds). If an expected element does not appear, it stops with an error and saves a screenshot in `scripts/demo/out/`.
+3. `scripts/demo/stack.sh down` stops only what step 1 started.
+
+To record one video, run `make demo-videos SCENES=tour`. The names are `tour`, `collaboration`, `databases` and `share`. `scripts/demo/check.sh` prints the format of each video and saves three frames of each to look at.
 
 ## Make targets
 

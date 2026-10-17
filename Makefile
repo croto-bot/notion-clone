@@ -3,7 +3,8 @@
 	frontend-shell frontend-dev frontend-install frontend-build frontend-lint frontend-lint-fix frontend-format frontend-format-check frontend-typecheck \
 	migrate migrate-create migrate-rollback migrate-history migrate-current db-shell db-reset \
 	test test-backend test-backend-cov test-e2e lint lint-fix format typecheck check ci quality \
-	pre-commit-install pre-commit-run setup check-ports start stop restart-all dev dev-backend dev-fresh api-docs api-health
+	pre-commit-install pre-commit-run setup check-ports start stop restart-all dev dev-backend dev-fresh api-docs api-health \
+	demo-videos
 
 # ty is not a project dependency: run a pinned release with uvx.
 # Supply-chain policy: a release at least 7 days old (0.0.84 = 2026-09-24).
@@ -284,3 +285,11 @@ api-docs: ## Open API documentation in browser
 
 api-health: ## Check API health endpoint
 	@curl -s http://localhost:9095/health || echo "Backend is not running"
+
+# ============================================================================
+# Demo videos
+# ============================================================================
+
+demo-videos: ## Record the README videos (docs/media) on a throwaway stack (ports 57732, 57195, 57400)
+	bash scripts/demo/stack.sh up
+	node scripts/demo/record.ts $(SCENES); status=$$?; bash scripts/demo/stack.sh down; exit $$status
