@@ -21,6 +21,9 @@ import { queryKeys } from '@/lib/query-keys'
 import type { RowProperties } from '@/types/database'
 import type { PageKind, PageResponse, PageSummary, UpdatePageData } from '@/types/page'
 
+/** What the row menus of a database can act on: a row is a page with an id and a title. */
+type PageRef = Pick<PageSummary, 'id' | 'title'>
+
 interface CreateOptions {
   parentId?: string | null
   kind?: PageKind
@@ -97,7 +100,7 @@ export function usePageActions() {
   )
 
   const duplicatePage = useCallback(
-    async (page: PageSummary) => {
+    async (page: PageRef) => {
       try {
         const copy = await duplicateMutation.mutateAsync(page.id)
         toast.success(`Duplicated "${pageLabel(page)}"`)
@@ -110,7 +113,7 @@ export function usePageActions() {
   )
 
   const restorePage = useCallback(
-    async (page: PageSummary) => {
+    async (page: PageRef) => {
       try {
         await restoreMutation.mutateAsync(page.id)
         toast.success(`Restored "${pageLabel(page)}"`)
@@ -122,7 +125,7 @@ export function usePageActions() {
   )
 
   const deletePage = useCallback(
-    async (page: PageSummary) => {
+    async (page: PageRef) => {
       try {
         await deleteMutation.mutateAsync(page.id)
       } catch (error) {
@@ -144,7 +147,7 @@ export function usePageActions() {
   )
 
   const purgePage = useCallback(
-    async (page: PageSummary) => {
+    async (page: PageRef) => {
       try {
         await purgeMutation.mutateAsync(page.id)
         toast.success(`Deleted "${pageLabel(page)}" forever`)

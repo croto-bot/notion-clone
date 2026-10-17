@@ -195,10 +195,11 @@ export function useSlashMenuItems(editor: Editor, pageId: string) {
   const insertChild = async (kind: 'page' | 'database') => {
     const child = await createPage({ parentId: pageId, kind, stay: true })
     if (!child) return
+    // The link block is already in the shared doc (insertOrUpdateBlock applies
+    // it synchronously and the provider broadcasts it), so open the new page now.
     insertOrUpdateBlockForSlashMenu(editor, { type: 'pageLink', props: { pageId: child.id } })
     requestTitleFocus(child.id)
-    // The new block reaches the server first; then the new page opens.
-    setTimeout(() => void navigate({ to: '/p/$pageId', params: { pageId: child.id } }), 250)
+    await navigate({ to: '/p/$pageId', params: { pageId: child.id } })
   }
 
   return (): DefaultReactSuggestionItem[] => {

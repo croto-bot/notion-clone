@@ -174,8 +174,13 @@ function PageTitle({
     void updatePage(pageId, { title: value })
   }, [pageId, updatePage])
 
-  // Leaving the page keeps what was typed.
-  useEffect(() => flush, [flush])
+  // Always hold the latest flush; only leaving the page flushes here (the
+  // debounce and the blur handler cover everything while the page is open).
+  const flushRef = useRef(flush)
+  useEffect(() => {
+    flushRef.current = flush
+  })
+  useEffect(() => () => flushRef.current(), [])
 
   // A page just created from the sidebar opens with the cursor in the title.
   useEffect(() => {
@@ -230,8 +235,6 @@ interface PageHeaderProps {
   page: PageResponse
   /** False for viewers, locked pages and the trash. */
   editable: boolean
-  /** Opens the comments panel instead of the inline box. */
-  commentsOpen: boolean
 }
 
 /** Cover, icon, hover buttons, title and the discussions of a page. */

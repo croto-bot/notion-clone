@@ -18,7 +18,6 @@ import { visibleProperties, type RowLike } from '@/features/database/properties'
 import { UNTITLED } from '@/features/pages/page-tree'
 import { consumeTitleFocus, peekTitleFocus } from '@/lib/title-focus'
 import { cn } from '@/lib/utils'
-import type { PageSummary } from '@/types/page'
 
 const TITLE_WIDTH = 300
 const COLUMN_WIDTH = 180
@@ -93,8 +92,6 @@ function TitleCell({ row }: { row: RowLike }) {
 function RowMenu({ row }: { row: RowLike }) {
   const { openRow } = useDatabase()
   const { deletePage, duplicatePage } = usePageActions()
-  // The page actions take a page summary; a row has the same id and title.
-  const asPage = row as unknown as PageSummary
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -111,12 +108,12 @@ function RowMenu({ row }: { row: RowLike }) {
           <ExternalLink />
           Open
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => void duplicatePage(asPage)}>
+        <DropdownMenuItem onSelect={() => void duplicatePage(row)}>
           <Copy />
           Duplicate
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" onSelect={() => void deletePage(asPage)}>
+        <DropdownMenuItem variant="destructive" onSelect={() => void deletePage(row)}>
           <Trash2 />
           Delete
         </DropdownMenuItem>

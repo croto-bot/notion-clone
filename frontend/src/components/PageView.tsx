@@ -92,7 +92,7 @@ function LoadedPage({ page }: { page: PageResponse }) {
               page.font === 'mono' && 'font-mono'
             )}
           >
-            <PageHeader page={page} editable={editable} commentsOpen={commentsOpen} />
+            <PageHeader page={page} editable={editable} />
             <Suspense
               fallback={
                 <div className={pageColumnClass(page)}>
