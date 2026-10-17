@@ -3,6 +3,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useSyncExternalStore,
 } from 'react'
@@ -61,10 +62,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const theme: Theme = snapshot.startsWith('system') ? 'system' : (snapshot as Theme)
   const resolvedTheme: ResolvedTheme = snapshot.endsWith('dark') ? 'dark' : 'light'
 
-  useEffect(() => {
+  // useLayoutEffect, not useEffect: hydration can strip the class the head
+  // script set, and this puts it back before the browser paints.
+  useLayoutEffect(() => {
     const root = document.documentElement
-    root.classList.toggle('dark', resolvedTheme === 'dark')
+    const dark = resolvedTheme === 'dark'
+    root.classList.toggle('dark', dark)
     root.style.colorScheme = resolvedTheme
+    root.style.backgroundColor = dark ? '#191919' : '#ffffff'
+    root.style.color = dark ? 'rgba(255,255,255,0.81)' : 'rgb(55,53,47)'
   }, [resolvedTheme])
 
   const setTheme = useCallback((next: Theme) => {

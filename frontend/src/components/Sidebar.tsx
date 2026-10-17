@@ -52,7 +52,7 @@ function ResizeHandle({ onResizing }: { onResizing: (resizing: boolean) => void 
         if (event.key === 'ArrowLeft') setSidebarWidth(sidebarWidth - 16)
         else if (event.key === 'ArrowRight') setSidebarWidth(sidebarWidth + 16)
       }}
-      className="hover:bg-primary/50 active:bg-primary/70 focus-visible:bg-primary/50 absolute top-0 -right-[2px] z-20 h-full w-1 cursor-col-resize transition-colors duration-150 outline-none"
+      className="hover:bg-primary/50 active:bg-primary/70 focus-visible:bg-primary/50 absolute top-0 right-0 z-20 h-full w-1.5 cursor-col-resize transition-colors duration-150 outline-none"
     />
   )
 }
@@ -71,15 +71,17 @@ export function Sidebar() {
       data-testid="sidebar"
       data-open={sidebarOpen}
       className={cn(
-        'bg-sidebar relative h-full shrink-0',
-        resizing ? 'transition-none' : 'transition-[width] duration-200 ease-out'
+        'bg-sidebar relative h-full shrink-0 overflow-hidden',
+        resizing
+          ? 'transition-none'
+          : 'transition-[width] duration-200 ease-out motion-reduce:transition-none'
       )}
       style={{ width: sidebarOpen ? sidebarWidth : 0 }}
     >
       <div
         // A hidden sidebar must not take focus: inert removes it from the tab order.
         inert={!sidebarOpen}
-        className="bg-sidebar absolute inset-y-0 left-0 flex flex-col overflow-hidden border-r"
+        className="bg-sidebar flex h-full flex-col border-r"
         style={{ width: sidebarWidth }}
       >
         <div className="group/top flex h-[45px] shrink-0 items-center gap-0.5 px-1.5">
