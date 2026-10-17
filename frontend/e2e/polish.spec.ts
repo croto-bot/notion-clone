@@ -8,17 +8,20 @@ test.describe('brand, theme and database layout', () => {
     expect(html).toBeTruthy()
     const head = html!.slice(0, html!.indexOf('</head>'))
     expect(head).toContain('nx-theme')
-    expect(head).toContain("classList.add('dark')")
+    expect(head).toContain('prefers-color-scheme')
 
     await page.evaluate(() => localStorage.setItem('nx-theme', 'dark'))
     await page.reload()
     await expect(page.locator('html')).toHaveClass(/dark/)
     await expect(page.locator('html')).toHaveCSS('background-color', 'rgb(25, 25, 25)')
+    await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark')
+    await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content', '#191919')
 
     await page.evaluate(() => localStorage.setItem('nx-theme', 'light'))
     await page.reload()
     await expect(page.locator('html')).not.toHaveClass(/dark/)
     await expect(page.locator('html')).toHaveCSS('background-color', 'rgb(255, 255, 255)')
+    await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content', '#ffffff')
     await expect(page).toHaveTitle('Noted')
   })
 

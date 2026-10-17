@@ -3,16 +3,22 @@ import React, {
   useCallback,
   useContext,
   useEffect,
-  useLayoutEffect,
   useMemo,
+  useLayoutEffect,
   useSyncExternalStore,
 } from 'react'
+import {
+  applyStoredTheme,
+  prefersDark,
+  readStoredTheme,
+  safeStorage,
+  THEME_COLOR,
+  THEME_KEY,
+  type ResolvedTheme,
+  type Theme,
+} from '@/lib/theme'
 
-export type Theme = 'light' | 'dark' | 'system'
-export type ResolvedTheme = 'light' | 'dark'
-
-/** localStorage key of the theme choice. The inline script in __root.tsx reads the same key. */
-export const THEME_KEY = 'nx-theme'
+export type { Theme, ResolvedTheme } from '@/lib/theme'
 
 interface ThemeContextValue {
   /** What the user picked. */
@@ -28,15 +34,6 @@ const ThemeContext = createContext<ThemeContextValue | undefined>(undefined)
 
 const listeners = new Set<() => void>()
 
-function readStoredTheme(): Theme {
-  try {
-    const value = localStorage.getItem(THEME_KEY)
-    return value === 'light' || value === 'dark' || value === 'system' ? value : 'system'
-  } catch {
-    return 'system'
-  }
-}
-
 function subscribe(listener: () => void) {
   listeners.add(listener)
   const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -51,9 +48,9 @@ function subscribe(listener: () => void) {
 
 // One snapshot string ("light" | "dark" | "system:light" | "system:dark") keeps the store primitive.
 function getSnapshot(): string {
-  const theme = readStoredTheme()
+  const theme = readStoredTheme(safeStorage())
   if (theme !== 'system') return theme
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'system:dark' : 'system:light'
+  return prefersDark() ? 'system:dark' : 'system:light'
 }
 const getServerSnapshot = () => 'system:light'
 
@@ -62,16 +59,19 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const theme: Theme = snapshot.startsWith('system') ? 'system' : (snapshot as Theme)
   const resolvedTheme: ResolvedTheme = snapshot.endsWith('dark') ? 'dark' : 'light'
 
-  // useLayoutEffect, not useEffect: hydration can strip the class the head
-  // script set, and this puts it back before the browser paints.
+  // useLayoutEffect, not useEffect: this runs before the browser paints.
+  //
+  // It reads storage and matchMedia itself instead of applying the render
+  // snapshot: during hydration that snapshot is still the server one
+  // ('system:light'), and applying it would overwrite the theme the head
+  // script already painted. The snapshot is only the signal that the choice
+  // changed (pick, OS switch, another tab).
   useLayoutEffect(() => {
-    const root = document.documentElement
-    const dark = resolvedTheme === 'dark'
-    root.classList.toggle('dark', dark)
-    root.style.colorScheme = resolvedTheme
-    root.style.backgroundColor = dark ? '#191919' : '#ffffff'
-    root.style.color = dark ? 'rgba(255,255,255,0.81)' : 'rgb(55,53,47)'
-  }, [resolvedTheme])
+    const resolved = applyStoredTheme(THEME_KEY, safeStorage(), prefersDark())
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute('content', THEME_COLOR[resolved])
+  }, [snapshot])
 
   const setTheme = useCallback((next: Theme) => {
     try {

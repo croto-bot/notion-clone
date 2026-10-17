@@ -36,7 +36,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { useAppShell, type SettingsTab } from '@/contexts/AppShellContext'
 import { useAuth } from '@/contexts/AuthContext'
-import { useTheme, type Theme } from '@/contexts/ThemeContext'
+import { useTheme } from '@/contexts/ThemeContext'
+import type { Theme } from '@/lib/theme'
 import { useWorkspace } from '@/contexts/WorkspaceContext'
 import { displayNameOf, useCurrentUser, useUpdateCurrentUser } from '@/hooks/useUser'
 import {

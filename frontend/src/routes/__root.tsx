@@ -22,15 +22,14 @@ const TanStackRouterDevtoolsPanel = lazyDev(() =>
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { ThemeProvider, THEME_KEY } from '@/contexts/ThemeContext'
+import { ThemeProvider } from '@/contexts/ThemeContext'
+import { THEME_SCRIPT } from '@/lib/theme'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { initWebVitals } from '@/lib/web-vitals'
 import { useDevtoolsEnabled } from '@/hooks/useDevtoolsEnabled'
 import { PRODUCT_NAME } from '@/lib/brand'
 
 import appCss from '@/styles/app.css?url'
-
-const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem(${JSON.stringify(THEME_KEY)});var d=t==='dark'||((t===null||t==='system')&&window.matchMedia('(prefers-color-scheme: dark)').matches);var r=document.documentElement;if(d)r.classList.add('dark');r.style.colorScheme=d?'dark':'light';r.style.backgroundColor=d?'#191919':'#ffffff';r.style.color=d?'rgba(255,255,255,0.81)':'rgb(55,53,47)';var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute('content',d?'#191919':'#ffffff')}catch(e){}})()`
 
 export const Route = createRootRoute({
   head: () => ({
