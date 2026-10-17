@@ -7,6 +7,7 @@ import {
   sidebarPage,
   trashPage,
   updatePage,
+  updateWorkspace,
   type Locator,
   type Page,
 } from './fixtures'
@@ -284,7 +285,9 @@ for (const theme of ['light', 'dark'] as const) {
     })
 
     test('home, sidebar, top bar and the shell menus', async ({ authedPage: page, api, user }) => {
-      const workspace = await ensureWorkspace(api, user)
+      const workspace = await updateWorkspace(api, user, (await ensureWorkspace(api, user)).id, {
+        name: 'A workspace name far too long for the sidebar header',
+      })
       await createPage(api, user, { workspace_id: workspace.id, title: 'Tree row' })
       const trashed = await createPage(api, user, { workspace_id: workspace.id, title: 'Gone' })
       await trashPage(api, user, trashed.id)
@@ -318,6 +321,14 @@ for (const theme of ['light', 'dark'] as const) {
         .toBeLessThanOrEqual(METRICS.sidebarRowHeight.max)
 
       // A long workspace name ends in an ellipsis before the header buttons.
+      const workspaceName = page.getByTestId('workspace-name')
+      expect.soft(await css(workspaceName, 'text-overflow'), 'workspace name').toBe('ellipsis')
+      expect
+        .soft(
+          await workspaceName.evaluate(element => element.scrollWidth > element.clientWidth),
+          'workspace name is cut'
+        )
+        .toBe(true)
       const switcherBox = await box(page.getByRole('button', { name: 'Switch workspace' }))
       const closeBox = await box(page.getByRole('button', { name: 'Close sidebar' }))
       expect
