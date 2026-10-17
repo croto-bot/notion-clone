@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from typing import TYPE_CHECKING, Any
 
 from tests.e2e.helpers import (
@@ -12,6 +11,7 @@ from tests.e2e.helpers import (
     create_workspace,
     held_db_lock,
     make_member,
+    wait_until_blocked,
 )
 
 if TYPE_CHECKING:
@@ -154,27 +154,17 @@ def test_create_racing_a_trash_of_its_parent(
         ]
         for thread in threads:
             thread.start()
-        queries: list[str] = []
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            rows = db.fetch_all(
-                "SELECT query FROM pg_stat_activity "
-                "WHERE datname = current_database() AND pid <> pg_backend_pid() "
-                "AND backend_type = 'client backend' "
-                "AND wait_event_type = 'Lock'"
-            )
-            queries = [row[0] or "" for row in rows]
+
+        def _both_parked(queries: list[str]) -> bool:
             inserting = any("INSERT INTO pages" in query for query in queries)
             updating = any(
                 "UPDATE pages" in query and "FOR UPDATE" not in query
                 for query in queries
             )
             advisory = any("pg_advisory_xact_lock" in query for query in queries)
-            if (inserting and updating) or (advisory and (inserting or updating)):
-                break
-            time.sleep(0.05)
-        else:
-            raise AssertionError(f"create and trash never both parked: {queries!r}")
+            return (inserting and updating) or (advisory and (inserting or updating))
+
+        wait_until_blocked(db, _both_parked)
     for thread in threads:
         thread.join(timeout=30)
 

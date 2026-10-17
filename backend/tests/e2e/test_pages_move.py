@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from typing import TYPE_CHECKING, Any
 
 from tests.e2e.helpers import (
@@ -13,6 +12,7 @@ from tests.e2e.helpers import (
     held_db_lock,
     make_member,
     wait_for_blocked_queries,
+    wait_until_blocked,
 )
 
 if TYPE_CHECKING:
@@ -260,25 +260,6 @@ def _assert_acyclic(pages: list[dict[str, Any]]) -> None:
             current = parents.get(current)
 
 
-def _blocked_queries(db: Database) -> list[str]:
-    rows = db.fetch_all(
-        "SELECT query FROM pg_stat_activity "
-        "WHERE datname = current_database() AND pid <> pg_backend_pid() "
-        "AND backend_type = 'client backend' "
-        "AND wait_event_type = 'Lock'"
-    )
-    return [row[0] or "" for row in rows]
-
-
-def _wait_until(db: Database, ready, *, timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if ready(_blocked_queries(db)):
-            return
-        time.sleep(0.05)
-    raise AssertionError(f"parked queries never matched: {_blocked_queries(db)!r}")
-
-
 def _moves_parked(queries: list[str]) -> bool:
     """Four row-lock waits, or the workspace lock plus the one writer it let through."""
     row_locks = sum("FOR UPDATE" in query for query in queries)
@@ -322,7 +303,7 @@ def _one_move_ring(
         ]
         for thread in threads:
             thread.start()
-        _wait_until(db, _moves_parked)
+        wait_until_blocked(db, _moves_parked)
     for thread in threads:
         thread.join(timeout=30)
 

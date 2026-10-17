@@ -262,11 +262,13 @@ def _wait_until_server_connections_are_idle(db: Database) -> None:
 @contextmanager
 def held_db_lock(
     db: Database, statement: str, params: tuple[Any, ...] = ()
-) -> Iterator[None]:
+) -> Iterator[psycopg.Connection]:
     """Run one locking statement and hold its transaction for the block.
 
     e.g. ``with held_db_lock(db, "LOCK TABLE pages IN EXCLUSIVE MODE"):``
     parks every write to ``pages`` behind the lock while reads keep going.
+    Yields the connection, so the test can act inside the same transaction
+    (its commit on exit is what releases the lock).
     """
     with psycopg.connect(db.url, autocommit=True) as conn:
         # Session-level, so the locking statement below cannot wait forever.
@@ -274,31 +276,52 @@ def held_db_lock(
         conn.autocommit = False
         with conn.transaction():
             conn.execute(statement, params)
-            yield
+            yield conn
+
+
+def _blocked_queries(db: Database) -> list[str]:
+    """The last query text of every lock-blocked server backend."""
+    rows = db.fetch_all(
+        "SELECT query FROM pg_stat_activity "
+        "WHERE datname = current_database() AND pid <> pg_backend_pid() "
+        "AND backend_type = 'client backend' "
+        "AND wait_event_type = 'Lock'"
+    )
+    return [row[0] or "" for row in rows]
+
+
+def wait_until_blocked(
+    db: Database, predicate: Callable[[list[str]], bool], *, timeout: float = 10.0
+) -> None:
+    """Wait until ``predicate`` holds on the lock-blocked server backends.
+
+    The predicate sees each blocked backend's last query text ("INSERT INTO
+    pages", "FOR UPDATE", "pg_advisory_xact_lock"), so a test can prove
+    requests are parked inside a chosen window before it releases the lock.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        queries = _blocked_queries(db)
+        if predicate(queries):
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"parked queries never matched: {_blocked_queries(db)!r}")
 
 
 def wait_for_blocked_queries(
     db: Database, *, count: int, needle: str, timeout: float = 10.0
 ) -> None:
-    """Wait until ``count`` server backends are lock-blocked on ``needle``.
+    """Wait until ``count`` blocked backends are lock-blocked on ``needle``.
 
     ``needle`` is matched inside the query text the blocked backend last ran
     ("INSERT INTO pages", "FOR UPDATE", "UPDATE pages"), so a test can prove
     a request is parked inside a chosen window before it releases the lock.
     """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        rows = db.fetch_all(
-            "SELECT pid FROM pg_stat_activity "
-            "WHERE datname = current_database() AND pid <> pg_backend_pid() "
-            "AND backend_type = 'client backend' "
-            "AND wait_event_type = 'Lock' AND query LIKE '%%' || %s || '%%'",
-            (needle,),
-        )
-        if len(rows) >= count:
-            return
-        time.sleep(0.05)
-    raise AssertionError(f"{count} blocked queries matching {needle!r} never appeared")
+    wait_until_blocked(
+        db,
+        lambda queries: sum(needle in query for query in queries) >= count,
+        timeout=timeout,
+    )
 
 
 # --- WebSocket helpers (the collab and events sockets) ------------------------
