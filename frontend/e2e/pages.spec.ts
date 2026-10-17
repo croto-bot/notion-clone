@@ -414,21 +414,9 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     // update as one contiguous string and survives the base64 decode below.
     await page.keyboard.insertText('Body worth copying')
     await expect(editor).toContainText('Body worth copying')
-    // Duplicate copies the SAVED document: the collab server persists the Yjs
-    // doc on its own schedule, so wait until the phrase is in the stored state.
-    await expect
-      .poll(
-        async () => {
-          const doc = await getDocument(api, user, parent.id)
-          return doc.state ? Buffer.from(doc.state, 'base64').toString('utf8') : ''
-        },
-        { timeout: 15_000 }
-      )
-      .toContain('Body worth copying')
-    await expect
-      .poll(async () => (await getDocument(api, user, parent.id)).state, { timeout: 15_000 })
-      .not.toBeNull()
-
+    // Duplicate immediately, while the collab room is still dirty: its flush
+    // debounces ~1 s, so the stored row does not have this text yet. The copy
+    // must still carry it (the duplicate reads the live room state).
     await page.getByRole('button', { name: 'Page options' }).click()
     await page.getByRole('menuitem', { name: 'Duplicate' }).click()
     await expect
@@ -447,6 +435,12 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
       item => item.parent_id === copy!.id
     )
     expect(children.map(child => child.title)).toEqual(['Offspring'])
+    await expect
+      .poll(async () => {
+        const doc = await getDocument(api, user, copy!.id)
+        return doc.state ? Buffer.from(doc.state, 'base64').toString('utf8') : ''
+      })
+      .toContain('Body worth copying')
     await page.goto(`/p/${copy!.id}`)
     await expect(page.getByTestId('editor')).toContainText('Body worth copying', {
       timeout: 15_000,

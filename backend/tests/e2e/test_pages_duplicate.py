@@ -5,12 +5,22 @@ from __future__ import annotations
 import base64
 from typing import TYPE_CHECKING
 
-from pycrdt import Doc, XmlFragment
+from pycrdt import Doc, XmlElement, XmlFragment, XmlText
+from websockets.sync.client import connect
 
-from tests.e2e.helpers import create_page, create_workspace, doc_with_text
+from tests.e2e.helpers import (
+    create_page,
+    create_workspace,
+    doc_with_text,
+    yjs_send_update,
+    yjs_sync,
+    yjs_wait_for,
+)
 
 if TYPE_CHECKING:
     import httpx
+
+    from tests.e2e.stack import LiveServer
 
 
 def test_duplicate_copies_the_page_after_the_source(
@@ -73,6 +83,48 @@ def test_duplicate_copies_the_yjs_document(auth_client: httpx.Client) -> None:
     doc.apply_update(base64.b64decode(stored["state"]))
     fragment = doc.get("document-store", type=XmlFragment)
     assert "Duplicated body text" in str(fragment)
+
+
+def test_duplicate_copies_the_live_room_state_while_it_is_dirty(
+    server: LiveServer, auth_client: httpx.Client
+) -> None:
+    """A duplicate right after an edit, inside the collab room's ~1 s flush
+    debounce, must carry the live text into the copy: both its document and
+    the content_text that search reads."""
+    workspace = create_workspace(auth_client)
+    source = create_page(auth_client, workspace["id"], title="Dirty")
+    token = auth_client.headers["Authorization"].removeprefix("Bearer ")
+    socket_url = (
+        f"{server.base_url.replace('http://', 'ws://')}"
+        f"/pages/{source['id']}/collab?token={token}"
+    )
+
+    with connect(socket_url, open_timeout=5) as conn:
+        doc, _ = doc_with_text()
+        yjs_sync(conn, doc)
+        fragment = doc.get("document-store", type=XmlFragment)
+        with doc.transaction():
+            fragment.children.append(
+                XmlElement("p", contents=[XmlText("flushless-needle")])
+            )
+        yjs_send_update(conn, doc)
+        yjs_wait_for(conn, doc, "flushless-needle")
+
+        # Duplicate right after the edit, before the room's ~1 s flush debounce
+        # could persist it: the copy must still carry the live text.
+        copy = auth_client.post(f"/pages/{source['id']}/duplicate").json()
+
+        stored_copy = auth_client.get(f"/pages/{copy['id']}/document").json()
+        copy_doc = Doc()
+        copy_doc.apply_update(base64.b64decode(stored_copy["state"]))
+        assert "flushless-needle" in str(
+            copy_doc.get("document-store", type=XmlFragment)
+        )
+
+        results = auth_client.get(
+            f"/workspaces/{workspace['id']}/search", params={"q": "flushless-needle"}
+        ).json()
+        assert copy["id"] in [result["id"] for result in results]
 
 
 def test_duplicate_of_a_trashed_page_is_rejected(auth_client: httpx.Client) -> None:
