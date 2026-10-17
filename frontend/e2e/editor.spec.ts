@@ -26,6 +26,8 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
     api,
     user,
   }) => {
+    // The reconnect wait can reach y-websocket's 30 s backoff ceiling.
+    test.setTimeout(90_000)
     const workspace = await ensureWorkspace(api, user)
     const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Slow socket' })
     await page.goto(`/p/${note.id}`)
@@ -59,7 +61,7 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
 
     // Back online the socket reconnects, syncs, and the saved content shows.
     await page.context().setOffline(false)
-    await expect(editor).toBeVisible({ timeout: 30_000 })
+    await expect(editor).toBeVisible({ timeout: 45_000 })
     await expect(editor).toContainText('Saved while online')
   })
   test('types, uses the slash menu and imports markdown', async ({
@@ -108,6 +110,8 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
     api,
     user,
   }) => {
+    // The reconnect wait can reach y-websocket's 30 s backoff ceiling.
+    test.setTimeout(90_000)
     const workspace = await ensureWorkspace(api, user)
     const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Gate import' })
     await page.goto(`/p/${note.id}`)
