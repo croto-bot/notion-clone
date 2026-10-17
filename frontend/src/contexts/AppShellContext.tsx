@@ -12,7 +12,6 @@ const SIDEBAR_WIDTH_KEY = 'nx-sidebar-width'
 
 interface AppShellContextValue {
   sidebarOpen: boolean
-  setSidebarOpen: (open: boolean) => void
   toggleSidebar: () => void
   sidebarWidth: number
   setSidebarWidth: (width: number) => void
@@ -68,11 +67,6 @@ export function AppShellProvider({ children }: { children: React.ReactNode }) {
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null)
   const [moveToPage, setMoveToPage] = useState<PageSummary | null>(null)
 
-  const setSidebarOpen = useCallback((open: boolean) => {
-    setSidebarOpenState(open)
-    store(SIDEBAR_OPEN_KEY, open ? '1' : '0')
-  }, [])
-
   const toggleSidebar = useCallback(() => {
     setSidebarOpenState(open => {
       store(SIDEBAR_OPEN_KEY, open ? '0' : '1')
@@ -111,7 +105,6 @@ export function AppShellProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(
     () => ({
       sidebarOpen,
-      setSidebarOpen,
       toggleSidebar,
       sidebarWidth,
       setSidebarWidth,
@@ -126,7 +119,6 @@ export function AppShellProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       sidebarOpen,
-      setSidebarOpen,
       toggleSidebar,
       sidebarWidth,
       setSidebarWidth,
