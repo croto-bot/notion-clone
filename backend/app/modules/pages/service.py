@@ -443,7 +443,9 @@ class PageService(BaseService[Page]):
             values["public_id"] = secrets.token_urlsafe(12)
         values["last_edited_by_id"] = user_id
         values["last_edited_at"] = datetime.now(tz=UTC)
-        updated = await self.repo.update(page_id, values)
+        # ``properties`` stays the raw per-key patch: the repository merges it
+        # into the stored map inside one SQL statement.
+        updated = await self.repo.update_page(page_id, values)
         self._log_entity(page_id)
         self._publish(
             page.workspace_id, "page.updated", actor_id=user_id, page_id=page_id
@@ -519,6 +521,11 @@ class PageService(BaseService[Page]):
         for old_id in self._breadth_first(nodes, page_id):
             node = nodes[old_id]
             is_root_copy = old_id == page_id
+            # The collab room flushes on a debounce: a page duplicated right
+            # after an edit must copy the live document, not the stale row.
+            # The copy's searchable text comes from the same state it ships.
+            live_state = self.collab_server.room_state(old_id)
+            state = live_state if live_state else node.ydoc_state
             rows.append(
                 {
                     "id": id_map[old_id],
@@ -540,8 +547,8 @@ class PageService(BaseService[Page]):
                     "public_id": None,
                     "created_by_id": user_id,
                     "last_edited_by_id": user_id,
-                    "ydoc_state": node.ydoc_state,
-                    "content_text": node.content_text,
+                    "ydoc_state": state,
+                    "content_text": extract_text(state) if state else node.content_text,
                     "database_schema": node.database_schema,
                     "database_views": node.database_views,
                     "properties": dict(node.properties or {}),

@@ -40,7 +40,7 @@ All tables: `uuid` PK, `TimestampMixin` (`created_at`, `updated_at`).
 - **pages**:
   - `workspace_id` (FK, cascade), `parent_id` (FK pages, cascade, null = root)
   - `kind` (`StrEnum`: `page` | `database`)
-  - `title` (str, default `""`), `icon` (str | null), `cover` (str | null: a URL or a preset key such as `gradient-1`), `cover_position` (int 0..100, default 50)
+  - `title` (str, default `""`), `icon` (str | null), `cover` (str | null: a preset key `gradient-1`…`gradient-6`, `color-red|orange|yellow|green|blue|purple`, or a URL that parses with scheme exactly https and a non-empty host; both sides use the same rule — `HTTPS://` is accepted like `https://`, while `https://` (no host) and `https://not a url` are 422s; the client renders the cover band by the same rule, so an unrenderable stored value renders no band), `cover_position` (int 0..100, default 50)
   - `position` (str, fractional index for ordering among siblings; the backend computes it)
   - `full_width`, `small_text`, `locked` (bool, default false), `font` (`default` | `serif` | `mono`)
   - `is_public` (bool), `public_id` (str | null, unique, url-safe random, set when published first)
@@ -97,7 +97,7 @@ with `page`, `size`) unless marked **(not paged)**.
 | GET | `/workspaces/{id}/favorites` | | **(not paged)** `PageSummary[]` of my favorites, by position |
 | POST | `/pages` | `{workspace_id, parent_id?, kind?, title?, icon?, after_id?, properties?}` | 201 `PageResponse`. Without `after_id` the page goes last. `kind=database` gets the default schema (Name, Tags multi_select, Status select with Not started/In progress/Done) and one `Table` view |
 | GET | `/pages/{id}` | | `PageResponse`. Also records a visit (upsert `page_visits`) |
-| PATCH | `/pages/{id}` | any of `{title, icon, cover, cover_position, full_width, small_text, locked, font, is_public, database_schema, database_views, properties}` | `PageResponse`; sets `last_edited_*`; `is_public: true` creates `public_id` once |
+| PATCH | `/pages/{id}` | any of `{title, icon, cover, cover_position, full_width, small_text, locked, font, is_public, database_schema, database_views, properties}` | `PageResponse`; sets `last_edited_*`; `is_public: true` creates `public_id` once. `properties` is a partial map merged per key in one atomic SQL statement (`properties = properties \|\| patch`, minus the keys whose value is null): a key set to `null` removes exactly that key, two clients editing different keys of one row both survive, and there is no clear-all (`properties: null` is a 422). Clients should send only the key they changed |
 | POST | `/pages/{id}/move` | `{parent_id: uuid | null, after_id?: uuid | null}` | `PageResponse`. `after_id = null` = first. A page cannot move into itself or its own subtree (400 `invalid_move`) |
 | POST | `/pages/{id}/duplicate` | | 201 `PageResponse` of the copy (same title, like Notion), placed right after the source, with the whole subtree and Yjs content |
 | DELETE | `/pages/{id}` | | 204. Moves the page and its subtree to the trash |
@@ -105,7 +105,7 @@ with `page`, `size`) unless marked **(not paged)**.
 | DELETE | `/pages/{id}/permanent` | | 204. Only trashed pages (else 409 `not_in_trash`) |
 | GET | `/pages/{id}/rows` | | **(not paged)** `PageResponse[]` (without breadcrumbs: `[]`) of a database's non-trashed rows, by position. 400 `not_a_database` for normal pages |
 | GET | `/pages/{id}/document` | | `{state: base64 | null}`: the stored Yjs update (the live collab room's state when a socket is connected, else `ydoc_state`) |
-| PUT | `/pages/{id}/document` | `{state: base64}` | `{state}`. Merges the update into the stored document (used by Markdown import before the editor connects, and by tests). Viewer = 403, trashed page = 400 `page_in_trash` |
+| PUT | `/pages/{id}/document` | `{state: base64}` | `{state}`. Merges the update into the stored document (an integration/test endpoint; the app's Markdown import goes through the live editor's replaceBlocks, not this). Viewer = 403, trashed page = 400 `page_in_trash` |
 | PUT | `/pages/{id}/favorite` | | 204 |
 | DELETE | `/pages/{id}/favorite` | | 204 |
 | GET | `/pages/{id}/comments` | | **(not paged)** `CommentResponse[]` oldest first = `{id, page_id, parent_id, body, resolved, edited, author: {id, display_name, email}, created_at, updated_at}` |
@@ -117,7 +117,7 @@ with `page`, `size`) unless marked **(not paged)**.
 
 | Method | Path | Result |
 |---|---|---|
-| GET | `/public/pages/{public_id}` | `PublicPageResponse` = `{id, title, icon, cover, cover_position, full_width, small_text, font, kind, state (base64 Yjs | null), database_schema, database_views, rows (for databases: `[{id, title, icon, properties}]`), children: [{id, title, icon, public_id}] (public children only)}`. 404 when not published or trashed |
+| GET | `/public/pages/{public_id}` | `PublicPageResponse` = `{id, title, icon, cover, cover_position, full_width, small_text, font, kind, state (base64 Yjs | null), database_schema, database_views, rows (for databases: `[{id, title, icon, properties, created_at, last_edited_at}]`), children: [{id, title, icon, public_id}] (public children only)}`. 404 when not published or trashed |
 
 ### Error codes the backend adds to this section's tables
 

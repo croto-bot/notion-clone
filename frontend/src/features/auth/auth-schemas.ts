@@ -7,6 +7,7 @@ export const loginSchema = z.object({
 
 export const registerSchema = z
   .object({
+    displayName: z.string().max(100, 'Name must be 100 characters or fewer').optional(),
     email: z.string().email('Invalid email address'),
     password: z.string().min(8, 'Password must be at least 8 characters'),
     confirmPassword: z.string(),
@@ -21,7 +22,11 @@ export type RegisterFormData = z.infer<typeof registerSchema>
 
 /** Maps register form values to the API payload (renames password → raw_password per backend contract). */
 export function registerFormToPayload(data: RegisterFormData) {
-  return { email: data.email, raw_password: data.password }
+  return {
+    email: data.email,
+    raw_password: data.password,
+    display_name: data.displayName?.trim() ?? '',
+  }
 }
 
 export type RegisterPayload = ReturnType<typeof registerFormToPayload>

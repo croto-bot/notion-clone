@@ -3,12 +3,33 @@
 import uuid
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.optional_model import partial_model
 from app.modules.pages.models import PageFont, PageKind
 from app.modules.workspaces.models import WorkspaceRole
+
+# The cover picker's presets (docs/SPEC.md §4). A cover is one of these keys
+# or an https image URL; anything else would ship every scheme the browser
+# accepts into the page background.
+COVER_PRESET_KEYS = frozenset(
+    {
+        "gradient-1",
+        "gradient-2",
+        "gradient-3",
+        "gradient-4",
+        "gradient-5",
+        "gradient-6",
+        "color-red",
+        "color-orange",
+        "color-yellow",
+        "color-green",
+        "color-blue",
+        "color-purple",
+    }
+)
 
 
 class UserRef(BaseModel):
@@ -94,6 +115,30 @@ class PageUpdate(BaseModel):
     database_views: list[dict[str, Any]] | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("cover")
+    @classmethod
+    def cover_is_a_preset_or_an_https_url(cls, value: str | None) -> str | None:
+        # One rule with the client's check (frontend/src/lib/colors.ts
+        # `isRenderableCover`; the shared case list lives in
+        # tests/e2e/test_databases.py and frontend/e2e/pages.spec.ts): a preset
+        # key, or a URL whose raw value starts with "https://" (either case,
+        # so "https:example.com" and "https:///x" are out), whose netloc has
+        # no whitespace, whose host is non-empty and whose port, if any, is
+        # 1..65535. A bad port makes `parsed.port` raise, which pydantic
+        # reports as this field's 422 like the branch below.
+        if value is None or value in COVER_PRESET_KEYS:
+            return value
+        parsed = urlparse(value)
+        if (
+            value.lower().startswith("https://")
+            and parsed.scheme == "https"
+            and parsed.hostname
+            and not any(char.isspace() for char in parsed.netloc)
+            and (parsed.port is None or 1 <= parsed.port <= 65535)
+        ):
+            return value
+        raise ValueError("cover must be a preset key or an https URL")
+
 
 @partial_model
 class PageUpdatePatch(PageUpdate):
@@ -133,6 +178,10 @@ class PublicRow(BaseModel):
     title: str
     icon: str | None
     properties: dict[str, Any]
+    # Computed columns (created_time / last_edited_time) read these; without
+    # them every such column renders empty and filters on them hide all rows.
+    created_at: datetime
+    last_edited_at: datetime
 
 
 class PublicChild(BaseModel):

@@ -28,9 +28,11 @@ The e2e suite needs Docker, uv, bun and Chromium (`bunx playwright install --wit
 
 | Path | File | Notes |
 |---|---|---|
-| `/` | `src/routes/index.tsx` | Home |
+| `/` | `src/routes/index.tsx` | Landing. A signed-in user goes to `/home` |
 | `/login`, `/register` | `src/routes/login.tsx`, `register.tsx` | `/login?redirect=<in-app path>` |
-| `/items` | `src/routes/_authed/items.tsx` | Sign-in required (example CRUD feature) |
+| `/home` | `src/routes/_authed/home.tsx` | Greeting and recently visited pages |
+| `/p/$pageId` | `src/routes/_authed/p/$pageId.tsx` | Page or database |
+| `/share/$publicId` | `src/routes/share/$publicId.tsx` | Public read-only page |
 | `/oauth/callback`, `/oauth/error` | `src/routes/oauth/` | Google OAuth return pages |
 
 ## More

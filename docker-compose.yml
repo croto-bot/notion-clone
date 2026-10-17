@@ -33,6 +33,7 @@ services:
       DEBUG_MODE: ${DEBUG_MODE:-false}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_FORMAT: ${LOG_FORMAT:-console}
+      LOG_UVICORN_ERROR_LEVEL: ${LOG_UVICORN_ERROR_LEVEL:-WARNING}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       # Optional integrations: empty values turn them off.
       SENTRY_DSN: ${SENTRY_DSN:-}

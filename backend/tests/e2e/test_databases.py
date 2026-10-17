@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
-from tests.e2e.helpers import assert_error, create_page, create_workspace
+from tests.e2e.helpers import (
+    assert_error,
+    create_page,
+    create_workspace,
+    held_db_lock,
+    wait_for_blocked_queries,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -12,6 +19,7 @@ if TYPE_CHECKING:
     import httpx
 
     from tests.e2e.helpers import RegisteredUser
+    from tests.e2e.stack import Database
 
 
 def test_new_database_gets_the_default_schema_and_a_table_view(
@@ -120,6 +128,82 @@ def test_row_properties_can_be_updated(auth_client: httpx.Client) -> None:
     assert updated["properties"] == {"title": "Renamed row", "tags": ["a", "b"]}
 
 
+def test_row_properties_patch_merges_per_key(auth_client: httpx.Client) -> None:
+    """Two clients editing different keys of one row must not overwrite each
+    other, and a key set to null removes exactly that key."""
+    workspace = create_workspace(auth_client)
+    database = create_page(auth_client, workspace["id"], kind="database")
+    row = create_page(
+        auth_client,
+        workspace["id"],
+        parent_id=database["id"],
+        properties={"tags": ["kept"], "status": "todo"},
+    )
+
+    # A client that only knows about its own key sends only that key.
+    first = auth_client.patch(
+        f"/pages/{row['id']}", json={"properties": {"priority": 1}}
+    )
+    assert first.status_code == 200
+    assert first.json()["properties"] == {
+        "tags": ["kept"],
+        "status": "todo",
+        "priority": 1,
+    }
+
+    second = auth_client.patch(
+        f"/pages/{row['id']}", json={"properties": {"tags": None}}
+    )
+    assert second.status_code == 200
+    assert second.json()["properties"] == {"status": "todo", "priority": 1}
+
+    stored = auth_client.get(f"/pages/{row['id']}").json()
+    assert stored["properties"] == {"status": "todo", "priority": 1}
+
+
+def test_row_properties_patch_merges_atomically_when_writes_overlap(
+    auth_client: httpx.Client, db: Database
+) -> None:
+    """Two PATCHes of different keys, parked on the row lock at the same
+    moment, must both land. The merge runs inside one SQL statement; the old
+    read-merge-write in Python computed both maps from the same base row, so
+    whichever UPDATE committed second erased the other's key."""
+    workspace = create_workspace(auth_client)
+    database = create_page(auth_client, workspace["id"], kind="database")
+    row = create_page(
+        auth_client,
+        workspace["id"],
+        parent_id=database["id"],
+        properties={"status": "todo"},
+    )
+
+    # Hold the row lock so both PATCHes park inside their UPDATE: each one
+    # reads the row (MVCC, unblocked) while the base is still the original,
+    # then queues on the lock. Releasing it serializes the two UPDATEs.
+    responses: list[httpx.Response] = []
+
+    def send_patch(properties: dict[str, object]) -> None:
+        responses.append(
+            auth_client.patch(f"/pages/{row['id']}", json={"properties": properties})
+        )
+
+    patches = [{"priority": 1}, {"done": True}]
+    threads = [threading.Thread(target=send_patch, args=(patch,)) for patch in patches]
+    with held_db_lock(
+        db, "SELECT id FROM pages WHERE id = %s FOR UPDATE", (row["id"],)
+    ):
+        for thread in threads:
+            thread.start()
+        # Both requests are inside their UPDATE, waiting on the row lock.
+        wait_for_blocked_queries(db, count=2, needle="UPDATE pages")
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert all(response.status_code == 200 for response in responses), responses
+    stored = auth_client.get(f"/pages/{row['id']}").json()
+    assert stored["properties"] == {"status": "todo", "priority": 1, "done": True}
+
+
 def test_page_options_can_be_updated(auth_client: httpx.Client) -> None:
     workspace = create_workspace(auth_client)
     page = create_page(auth_client, workspace["id"])
@@ -147,6 +231,58 @@ def test_page_options_can_be_updated(auth_client: httpx.Client) -> None:
     assert updated["locked"] is True
     assert updated["font"] == "mono"
     assert updated["last_edited_by"]["id"] == updated["created_by"]["id"]
+
+
+#: The cover rule's case list, shared verbatim with the Playwright check in
+#: frontend/e2e/pages.spec.ts ("applies one cover rule on both sides of the
+#: wire"): the server's validator and the client's isRenderableCover must
+#: agree on every row. (value, accepted).
+COVER_CASES: list[tuple[str, bool]] = [
+    ("gradient-1", True),  # a picker preset key
+    ("https://cdn.example.com/bg.png", True),
+    ("HTTPS://cdn.example.com/bg.png", True),  # both sides lowercase the scheme
+    ("https://cdn.example.com:8443/bg.png", True),  # a port in range
+    (
+        "https://cdn.example.com/bg image.png",
+        True,
+    ),  # only the netloc must be whitespace-free
+    ("http://cdn.example.com/bg.png", False),  # wrong scheme
+    ("javascript:alert(1)", False),
+    ("gradient-7", False),  # not a preset key
+    ("https://", False),  # no host
+    ("https:///x", False),  # empty netloc
+    ("https:example.com", False),  # no "//" after the scheme
+    ("https://not a url", False),  # whitespace in the netloc
+    ("https://cdn.example.com:0/bg.png", False),  # port 0 is not a port
+    ("https://cdn.example.com:99999/bg.png", False),  # port out of range
+    ("https://cdn.example.com:abc/bg.png", False),  # port not a number
+]
+
+
+def test_cover_must_be_a_preset_or_an_https_url(auth_client: httpx.Client) -> None:
+    """The cover lands in a CSS background: only the picker's preset keys and
+    the https URLs of COVER_CASES are accepted (422 otherwise), so no other
+    scheme or arbitrary string ships into the page background. The same table
+    drives the client's picker check in frontend/e2e/pages.spec.ts."""
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+
+    stored: str | None = None
+    for value, accepted in COVER_CASES:
+        response = auth_client.patch(f"/pages/{page['id']}", json={"cover": value})
+        if not accepted:
+            body = assert_error(response, 422, "validation_error")
+            assert [issue["loc"] for issue in body["detail"]] == [["body", "cover"]]
+            continue
+        assert response.status_code == 200, (value, response.text)
+        assert response.json()["cover"] == value
+        stored = value
+
+    # Only the accepted rows ever reached the row, and None clears the cover.
+    kept = auth_client.get(f"/pages/{page['id']}").json()
+    assert kept["cover"] == stored
+    cleared = auth_client.patch(f"/pages/{page['id']}", json={"cover": None}).json()
+    assert cleared["cover"] is None
 
 
 def test_rows_carry_the_callers_role(

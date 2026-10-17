@@ -1,235 +1,201 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import './home.css'
+import { useEffect } from 'react'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
+import { Check, ChevronRight, FileText, Home, Search, Settings, Star } from 'lucide-react'
+import { NotionLogo } from '@/components/NotionLogo'
+import { buttonVariants } from '@/components/ui/button'
+import { useAuth } from '@/contexts/AuthContext'
+import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/')({
-  component: HomePage,
+  component: Landing,
 })
 
-const features = [
-  {
-    title: 'TanStack Start SSR',
-    description: 'Server-side rendering with React for blazing fast initial loads',
-    number: '01',
-    color: 'lime',
-  },
-  {
-    title: 'FastAPI Backend',
-    description: 'Modern Python async API with automatic OpenAPI docs',
-    number: '02',
-    color: 'cyan',
-  },
-  {
-    title: 'PostgreSQL + SQLAlchemy',
-    description: 'Rock-solid async database layer with migrations',
-    number: '03',
-    color: 'purple',
-  },
-  {
-    title: 'Authentication Built-in',
-    description: 'Session-based auth ready to customize',
-    number: '04',
-    color: 'orange',
-  },
-  {
-    title: 'Docker Compose',
-    description: 'One command to spin up your entire stack',
-    number: '05',
-    color: 'blue',
-  },
-  {
-    title: 'Type-Safe Everything',
-    description: 'TypeScript frontend + Pydantic backend = zero runtime surprises',
-    number: '06',
-    color: 'pink',
-  },
-]
+function Landing() {
+  const { isAuthenticated } = useAuth()
+  const navigate = useNavigate()
 
-const techStack = [
-  { name: 'React 19', category: 'Frontend' },
-  { name: 'TanStack Router', category: 'Frontend' },
-  { name: 'TanStack Query', category: 'Frontend' },
-  { name: 'Tailwind CSS v4', category: 'Frontend' },
-  { name: 'shadcn/ui', category: 'Frontend' },
-  { name: 'FastAPI', category: 'Backend' },
-  { name: 'SQLAlchemy 2.0', category: 'Backend' },
-  { name: 'PostgreSQL', category: 'Backend' },
-  { name: 'Alembic', category: 'Backend' },
-  { name: 'Pydantic v2', category: 'Backend' },
-]
+  // The server cannot read the session (it is in localStorage): after hydration,
+  // a signed-in visitor goes straight to the app.
+  useEffect(() => {
+    if (isAuthenticated) void navigate({ to: '/home', replace: true })
+  }, [isAuthenticated, navigate])
 
-function HomePage() {
   return (
-    <div className="demo-page">
-      {/* Hero Section */}
-      <section className="hero-section">
-        <div className="hero-noise" />
-        <div className="hero-grid" />
-
-        <div className="hero-content loaded">
-          <div className="hero-badge">
-            <span className="hero-badge-dot" />
-            PRODUCTION READY
-          </div>
-
-          <h1 className="hero-title">
-            <span className="hero-title-line" style={{ animationDelay: '0ms' }}>
-              Full-Stack
-            </span>
-            <span className="hero-title-line" style={{ animationDelay: '100ms' }}>
-              Template
-            </span>
-            <span className="hero-title-line accent" style={{ animationDelay: '200ms' }}>
-              That Works
-            </span>
-          </h1>
-
-          <p className="hero-subtitle" style={{ animationDelay: '400ms' }}>
-            Stop wiring up boilerplate. Start building features.
-            <br />
-            FastAPI + TanStack Start + PostgreSQL in one command.
-          </p>
-
-          <div className="hero-cta-group" style={{ animationDelay: '600ms' }}>
-            <Link to="/register" className="cta-primary">
-              <span>Get Started</span>
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path
-                  d="M6 3L11 8L6 13"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </Link>
-            <Link to="/login" className="cta-secondary">
-              Sign In
-            </Link>
-          </div>
-        </div>
-
-        <div className="hero-visual loaded">
-          <div className="terminal-window" style={{ animationDelay: '800ms' }}>
-            <div className="terminal-header">
-              <div className="terminal-dots">
-                <span />
-                <span />
-                <span />
-              </div>
-              <div className="terminal-title">docker compose up</div>
-            </div>
-            <div className="terminal-body">
-              <div className="terminal-line" style={{ animationDelay: '1000ms' }}>
-                <span className="terminal-prompt">$</span> docker compose up
-              </div>
-              <div className="terminal-line success" style={{ animationDelay: '1200ms' }}>
-                ✓ Frontend ready on http://localhost:3000
-              </div>
-              <div className="terminal-line success" style={{ animationDelay: '1400ms' }}>
-                ✓ Backend API on http://localhost:9095
-              </div>
-              <div className="terminal-line success" style={{ animationDelay: '1600ms' }}>
-                ✓ Database running on port 5432
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Features Grid */}
-      <section className="features-section">
-        <div className="section-header">
-          <h2 className="section-title">
-            Everything You Need
-            <span className="section-title-underline" />
-          </h2>
-          <p className="section-description">
-            Not another half-baked starter. This is the real deal.
-          </p>
-        </div>
-
-        <div className="features-grid">
-          {features.map((feature, index) => (
-            <div
-              key={feature.title}
-              className={`feature-card feature-card-${feature.color}`}
-              style={{ animationDelay: `${index * 100}ms` }}
+    <div className="bg-background text-foreground min-h-screen">
+      <header className="bg-background/90 sticky top-0 z-30 backdrop-blur-md">
+        <nav className="mx-auto flex h-16 max-w-[1120px] items-center justify-between px-6">
+          <Link to="/" className="flex items-center gap-2" aria-label="Notion home">
+            <NotionLogo size={30} />
+            <span className="text-[20px] font-bold tracking-tight">Notion</span>
+          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              to="/login"
+              className={cn(buttonVariants({ variant: 'ghost', size: 'default' }), 'text-[15px]')}
             >
-              <div className="feature-number">{feature.number}</div>
-              <h3 className="feature-title">{feature.title}</h3>
-              <p className="feature-description">{feature.description}</p>
-              <div className="feature-line" />
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Tech Stack */}
-      <section className="tech-section">
-        <div className="tech-container">
-          <div className="tech-header">
-            <h2 className="tech-title">Modern Stack</h2>
-            <p className="tech-subtitle">Built with tools you actually want to use</p>
-          </div>
-
-          <div className="tech-columns">
-            <div className="tech-column">
-              <div className="tech-column-label">Frontend</div>
-              <div className="tech-list">
-                {techStack
-                  .filter(tech => tech.category === 'Frontend')
-                  .map((tech, index) => (
-                    <div
-                      key={tech.name}
-                      className="tech-item"
-                      style={{ animationDelay: `${index * 50}ms` }}
-                    >
-                      <div className="tech-item-dot" />
-                      {tech.name}
-                    </div>
-                  ))}
-              </div>
-            </div>
-
-            <div className="tech-divider" />
-
-            <div className="tech-column">
-              <div className="tech-column-label">Backend</div>
-              <div className="tech-list">
-                {techStack
-                  .filter(tech => tech.category === 'Backend')
-                  .map((tech, index) => (
-                    <div
-                      key={tech.name}
-                      className="tech-item"
-                      style={{ animationDelay: `${index * 50 + 250}ms` }}
-                    >
-                      <div className="tech-item-dot" />
-                      {tech.name}
-                    </div>
-                  ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* CTA Section */}
-      <section className="cta-section">
-        <div className="cta-content">
-          <h2 className="cta-title">Ready to Ship?</h2>
-          <p className="cta-description">Clone, customize, deploy. No PhD required.</p>
-          <div className="cta-actions">
-            <Link to="/register" className="cta-btn-primary">
-              Start Building
-              <span className="cta-btn-arrow">→</span>
+              Log in
             </Link>
-            <Link to="/login" className="cta-btn-ghost">
-              Sign In
+            <Link
+              to="/register"
+              className={cn(buttonVariants({ variant: 'default', size: 'default' }), 'text-[15px]')}
+            >
+              Get Notion free
             </Link>
           </div>
+        </nav>
+      </header>
+
+      <main>
+        <section className="mx-auto max-w-[1120px] px-6 pt-16 pb-10 text-center sm:pt-24">
+          <h1 className="animate-in fade-in-0 slide-in-from-bottom-2 mx-auto max-w-[760px] text-[44px] leading-[1.05] font-bold tracking-[-0.035em] duration-500 sm:text-[64px]">
+            Write. Plan. <span className="text-primary">Collaborate.</span>
+          </h1>
+          <p className="text-muted-foreground animate-in fade-in-0 slide-in-from-bottom-2 mx-auto mt-6 max-w-[560px] text-[18px] leading-snug delay-100 duration-500 sm:text-[20px]">
+            Notion is the connected workspace where better, faster work happens: docs, wikis and
+            databases, edited together in real time.
+          </p>
+          <div className="animate-in fade-in-0 mt-9 flex flex-wrap items-center justify-center gap-3 delay-200 duration-500">
+            <Link
+              to="/register"
+              className={cn(
+                buttonVariants({ variant: 'default', size: 'lg' }),
+                'h-11 px-5 text-[16px]'
+              )}
+            >
+              Get Notion free
+            </Link>
+            <Link
+              to="/login"
+              className={cn(
+                buttonVariants({ variant: 'outline', size: 'lg' }),
+                'h-11 px-5 text-[16px]'
+              )}
+            >
+              Log in
+            </Link>
+          </div>
+        </section>
+
+        <section aria-hidden="true" className="mx-auto max-w-[1040px] px-6 pb-20">
+          <AppMock />
+        </section>
+
+        <section className="bg-sidebar border-y">
+          <div className="mx-auto grid max-w-[1120px] gap-8 px-6 py-16 sm:grid-cols-3">
+            <Feature
+              title="Docs that feel like a doc"
+              text="Type / for blocks, drag them around, link pages together. Headings, lists, to-dos, toggles, code, tables and more."
+            />
+            <Feature
+              title="Real-time collaboration"
+              text="See who is on the page, follow live cursors and keep editing while offline. Changes merge when you reconnect."
+            />
+            <Feature
+              title="Databases in four views"
+              text="Turn any list into a table, board, list or gallery. Sort, filter and group without leaving the page."
+            />
+          </div>
+        </section>
+      </main>
+
+      <footer className="text-muted-foreground mx-auto flex max-w-[1120px] items-center justify-between px-6 py-8 text-[13px]">
+        <span>© Notion clone. Open source.</span>
+        <span className="flex gap-4">
+          <Link to="/login" className="hover:text-foreground transition-colors duration-100">
+            Log in
+          </Link>
+          <Link to="/register" className="hover:text-foreground transition-colors duration-100">
+            Sign up
+          </Link>
+        </span>
+      </footer>
+    </div>
+  )
+}
+
+function Feature({ title, text }: { title: string; text: string }) {
+  return (
+    <div>
+      <h2 className="text-[19px] leading-tight font-semibold">{title}</h2>
+      <p className="text-muted-foreground mt-2 text-[15px] leading-relaxed">{text}</p>
+    </div>
+  )
+}
+
+const MOCK_ROWS = [
+  { icon: <Home className="size-4" />, label: 'Home' },
+  { icon: <Search className="size-4" />, label: 'Search' },
+  { icon: <Settings className="size-4" />, label: 'Settings' },
+]
+
+/** A static picture of the app, built from the same colors as the real thing. */
+function AppMock() {
+  return (
+    <div className="bg-background shadow-modal mx-auto flex h-[420px] overflow-hidden rounded-[10px] border text-left">
+      <div className="bg-sidebar hidden w-[220px] shrink-0 flex-col gap-0.5 border-r p-2 sm:flex">
+        <div className="mb-2 flex items-center gap-2 px-2 py-1.5 text-[14px] font-medium">
+          <span className="grid size-5 place-items-center rounded-[4px] bg-[#e7f3f8] text-[11px]">
+            A
+          </span>
+          Ada&apos;s Notion
         </div>
-        <div className="cta-background" />
-      </section>
+        {MOCK_ROWS.map(row => (
+          <div
+            key={row.label}
+            className="text-muted-foreground flex items-center gap-2 px-2 py-1 text-[14px]"
+          >
+            {row.icon}
+            {row.label}
+          </div>
+        ))}
+        <div className="text-subtle mt-4 px-2 py-1 text-[12px] font-medium">Favorites</div>
+        <div className="flex items-center gap-2 px-2 py-1 text-[14px]">
+          <Star className="text-muted-foreground size-4" />
+          Product roadmap
+        </div>
+        <div className="text-subtle mt-3 px-2 py-1 text-[12px] font-medium">Pages</div>
+        <div className="bg-hover-strong flex items-center gap-2 rounded-[4px] px-2 py-1 text-[14px] font-medium">
+          <ChevronRight className="text-subtle size-3.5 rotate-90" />
+          🚀 Product roadmap
+        </div>
+        <div className="flex items-center gap-2 py-1 pr-2 pl-7 text-[14px]">
+          <FileText className="text-muted-foreground size-4" />
+          Launch checklist
+        </div>
+        <div className="text-muted-foreground flex items-center gap-2 px-2 py-1 text-[14px]">
+          <ChevronRight className="text-subtle size-3.5" />
+          📚 Team wiki
+        </div>
+      </div>
+      <div className="min-w-0 flex-1 overflow-hidden">
+        <div className="h-[110px] bg-gradient-to-r from-[#bcd9f2] via-[#d8c8f0] to-[#f5c9d9]" />
+        <div className="mx-auto max-w-[620px] px-8">
+          <div className="-mt-9 text-[64px] leading-none">🚀</div>
+          <h2 className="mt-3 text-[38px] leading-tight font-bold tracking-tight">
+            Product roadmap
+          </h2>
+          <p className="text-muted-foreground mt-3 text-[16px]">
+            Everything the team ships this quarter, in one place.
+          </p>
+          <ul className="mt-4 space-y-2 text-[16px]">
+            {['Real-time editing', 'Boards and tables', 'Public pages'].map((item, index) => (
+              <li key={item} className="flex items-center gap-2.5">
+                <span
+                  className={cn(
+                    'grid size-4 place-items-center rounded-[3px]',
+                    index < 2 ? 'bg-primary text-white' : 'border-foreground/40 border'
+                  )}
+                >
+                  {index < 2 ? <Check className="size-3" strokeWidth={3} /> : null}
+                </span>
+                <span className={index < 2 ? 'text-muted-foreground line-through' : ''}>
+                  {item}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
     </div>
   )
 }

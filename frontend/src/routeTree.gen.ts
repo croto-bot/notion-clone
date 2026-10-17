@@ -13,9 +13,11 @@ import { Route as RegisterRouteImport } from './routes/register'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as SharePublicIdRouteImport } from './routes/share/$publicId'
 import { Route as OauthErrorRouteImport } from './routes/oauth/error'
 import { Route as OauthCallbackRouteImport } from './routes/oauth/callback'
-import { Route as AuthedItemsRouteImport } from './routes/_authed/items'
+import { Route as AuthedHomeRouteImport } from './routes/_authed/home'
+import { Route as AuthedPPageIdRouteImport } from './routes/_authed/p/$pageId'
 
 const RegisterRoute = RegisterRouteImport.update({
   id: '/register',
@@ -36,6 +38,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SharePublicIdRoute = SharePublicIdRouteImport.update({
+  id: '/share/$publicId',
+  path: '/share/$publicId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OauthErrorRoute = OauthErrorRouteImport.update({
   id: '/oauth/error',
   path: '/oauth/error',
@@ -46,9 +53,14 @@ const OauthCallbackRoute = OauthCallbackRouteImport.update({
   path: '/oauth/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthedItemsRoute = AuthedItemsRouteImport.update({
-  id: '/items',
-  path: '/items',
+const AuthedHomeRoute = AuthedHomeRouteImport.update({
+  id: '/home',
+  path: '/home',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedPPageIdRoute = AuthedPPageIdRouteImport.update({
+  id: '/p/$pageId',
+  path: '/p/$pageId',
   getParentRoute: () => AuthedRoute,
 } as any)
 
@@ -56,17 +68,21 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
-  '/items': typeof AuthedItemsRoute
+  '/home': typeof AuthedHomeRoute
   '/oauth/callback': typeof OauthCallbackRoute
   '/oauth/error': typeof OauthErrorRoute
+  '/share/$publicId': typeof SharePublicIdRoute
+  '/p/$pageId': typeof AuthedPPageIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
-  '/items': typeof AuthedItemsRoute
+  '/home': typeof AuthedHomeRoute
   '/oauth/callback': typeof OauthCallbackRoute
   '/oauth/error': typeof OauthErrorRoute
+  '/share/$publicId': typeof SharePublicIdRoute
+  '/p/$pageId': typeof AuthedPPageIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -74,9 +90,11 @@ export interface FileRoutesById {
   '/_authed': typeof AuthedRouteWithChildren
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
-  '/_authed/items': typeof AuthedItemsRoute
+  '/_authed/home': typeof AuthedHomeRoute
   '/oauth/callback': typeof OauthCallbackRoute
   '/oauth/error': typeof OauthErrorRoute
+  '/share/$publicId': typeof SharePublicIdRoute
+  '/_authed/p/$pageId': typeof AuthedPPageIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -84,26 +102,32 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/register'
-    | '/items'
+    | '/home'
     | '/oauth/callback'
     | '/oauth/error'
+    | '/share/$publicId'
+    | '/p/$pageId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
     | '/register'
-    | '/items'
+    | '/home'
     | '/oauth/callback'
     | '/oauth/error'
+    | '/share/$publicId'
+    | '/p/$pageId'
   id:
     | '__root__'
     | '/'
     | '/_authed'
     | '/login'
     | '/register'
-    | '/_authed/items'
+    | '/_authed/home'
     | '/oauth/callback'
     | '/oauth/error'
+    | '/share/$publicId'
+    | '/_authed/p/$pageId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -113,6 +137,7 @@ export interface RootRouteChildren {
   RegisterRoute: typeof RegisterRoute
   OauthCallbackRoute: typeof OauthCallbackRoute
   OauthErrorRoute: typeof OauthErrorRoute
+  SharePublicIdRoute: typeof SharePublicIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -145,6 +170,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/share/$publicId': {
+      id: '/share/$publicId'
+      path: '/share/$publicId'
+      fullPath: '/share/$publicId'
+      preLoaderRoute: typeof SharePublicIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/oauth/error': {
       id: '/oauth/error'
       path: '/oauth/error'
@@ -159,22 +191,31 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OauthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authed/items': {
-      id: '/_authed/items'
-      path: '/items'
-      fullPath: '/items'
-      preLoaderRoute: typeof AuthedItemsRouteImport
+    '/_authed/home': {
+      id: '/_authed/home'
+      path: '/home'
+      fullPath: '/home'
+      preLoaderRoute: typeof AuthedHomeRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/p/$pageId': {
+      id: '/_authed/p/$pageId'
+      path: '/p/$pageId'
+      fullPath: '/p/$pageId'
+      preLoaderRoute: typeof AuthedPPageIdRouteImport
       parentRoute: typeof AuthedRoute
     }
   }
 }
 
 interface AuthedRouteChildren {
-  AuthedItemsRoute: typeof AuthedItemsRoute
+  AuthedHomeRoute: typeof AuthedHomeRoute
+  AuthedPPageIdRoute: typeof AuthedPPageIdRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
-  AuthedItemsRoute: AuthedItemsRoute,
+  AuthedHomeRoute: AuthedHomeRoute,
+  AuthedPPageIdRoute: AuthedPPageIdRoute,
 }
 
 const AuthedRouteWithChildren =
@@ -187,6 +228,7 @@ const rootRouteChildren: RootRouteChildren = {
   RegisterRoute: RegisterRoute,
   OauthCallbackRoute: OauthCallbackRoute,
   OauthErrorRoute: OauthErrorRoute,
+  SharePublicIdRoute: SharePublicIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

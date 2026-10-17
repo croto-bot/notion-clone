@@ -8,6 +8,8 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
+from websockets.sync.client import connect
+
 from tests.e2e.helpers import (
     assert_error,
     create_page,
@@ -23,7 +25,7 @@ if TYPE_CHECKING:
     import httpx
 
     from tests.e2e.helpers import RegisteredUser
-    from tests.e2e.stack import Database, ServerLogView
+    from tests.e2e.stack import Database, LiveServer, ServerLogView
 
 
 def test_each_request_emits_exactly_one_wide_event(
@@ -54,6 +56,36 @@ def test_each_request_emits_exactly_one_wide_event(
         e for e in server_log.events() if e.get("trace_id") == event["trace_id"]
     ]
     assert len(same_request) == 1
+
+
+def test_session_token_never_appears_in_the_server_output(
+    server: LiveServer, auth_client: httpx.Client, server_log: ServerLogView
+) -> None:
+    """Sessions ride in the Authorization header and in socket query strings;
+    neither may leak into what the server prints. uvicorn's WebSocket accept
+    line (uvicorn.error) echoes the whole socket path - ``?token=`` included -
+    and its access lines echo request query strings; both must come out
+    redacted, not merely suppressed."""
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+    token = auth_client.headers["Authorization"].removeprefix("Bearer ")
+    socket_url = (
+        f"{server.base_url.replace('http://', 'ws://')}"
+        f"/pages/{page['id']}/collab?token={token}"
+    )
+
+    with connect(socket_url, open_timeout=5):
+        auth_client.get(f"/pages/{page['id']}")
+
+    # The accept line was emitted with the token redacted (the e2e stack
+    # raises uvicorn.error to INFO so the line exists to check).
+    accept = server_log.wait_for(
+        lambda e: '"WebSocket /pages/' in e["message"] and "[accepted]" in e["message"]
+    )
+    assert f"/pages/{page['id']}/collab?token=[REDACTED]" in accept["message"], accept[
+        "message"
+    ]
+    assert token not in server_log.text()
 
 
 def test_wide_event_names_the_route_template(

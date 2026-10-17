@@ -1,29 +1,64 @@
-import type { ItemsParams } from '@/types/item'
-
 export const API = {
   AUTH: {
     LOGIN: '/auth/login',
     REGISTER: '/auth/register',
     LOGOUT: '/auth/logout',
   },
-  ITEMS: {
-    LIST: '/items',
-    CREATE: '/items',
-    DETAIL: (id: string) => `/items/${id}`,
+  USERS: {
+    ME: '/users/me', // GET, PATCH
+  },
+  WORKSPACES: {
+    LIST: '/workspaces',
+    CREATE: '/workspaces',
+    DETAIL: (id: string) => `/workspaces/${id}`, // PATCH, DELETE
+    MEMBERS: (id: string) => `/workspaces/${id}/members`, // GET, POST
+    MEMBER: (id: string, userId: string) => `/workspaces/${id}/members/${userId}`, // PATCH, DELETE
+    PAGE_TREE: (id: string) => `/workspaces/${id}/page-tree`,
+    TRASH: (id: string) => `/workspaces/${id}/trash`,
+    RECENT: (id: string) => `/workspaces/${id}/recent`,
+    SEARCH: (id: string) => `/workspaces/${id}/search`,
+    FAVORITES: (id: string) => `/workspaces/${id}/favorites`,
+  },
+  PAGES: {
+    CREATE: '/pages',
+    DETAIL: (id: string) => `/pages/${id}`, // GET, PATCH, DELETE
+    MOVE: (id: string) => `/pages/${id}/move`,
+    DUPLICATE: (id: string) => `/pages/${id}/duplicate`,
+    RESTORE: (id: string) => `/pages/${id}/restore`,
+    PERMANENT: (id: string) => `/pages/${id}/permanent`,
+    ROWS: (id: string) => `/pages/${id}/rows`,
+    DOCUMENT: (id: string) => `/pages/${id}/document`, // GET, PUT
+    FAVORITE: (id: string) => `/pages/${id}/favorite`, // PUT, DELETE
+    COMMENTS: (id: string) => `/pages/${id}/comments`, // GET, POST
+  },
+  COMMENTS: {
+    DETAIL: (id: string) => `/comments/${id}`, // PATCH, DELETE
+  },
+  PUBLIC: {
+    PAGE: (publicId: string) => `/public/pages/${publicId}`,
+  },
+  /** WebSocket paths. Browsers cannot set headers on a socket: the session goes in `?token=`. */
+  WS: {
+    PAGE_COLLAB: (id: string) => `/pages/${id}/collab`,
+    WORKSPACE_EVENTS: (id: string) => `/workspaces/${id}/events`,
   },
 } as const
 
-/** Makes `%`, `_` and `\` match themselves in an ILIKE pattern (backslash is Postgres' default escape). */
-function escapeLikePattern(text: string): string {
-  return text.replace(/[\\%_]/g, '\\$&')
+/** The trash list of a workspace, optionally filtered by `q`. */
+export function buildTrashUrl(workspaceId: string, q?: string): string {
+  const base = API.WORKSPACES.TRASH(workspaceId)
+  return q ? `${base}?${new URLSearchParams({ q })}` : base
 }
 
-/** Builds the items list URL with query string. Translates semantic params to wire keys (e.g. name → name__ilike=%name%). */
-export function buildItemsListUrl(params?: ItemsParams): string {
-  const queryParams = new URLSearchParams()
-  if (params?.page) queryParams.append('page', params.page.toString())
-  if (params?.size) queryParams.append('size', params.size.toString())
-  if (params?.name) queryParams.append('name__ilike', `%${escapeLikePattern(params.name)}%`)
-  const queryString = queryParams.toString()
-  return queryString ? `${API.ITEMS.LIST}?${queryString}` : API.ITEMS.LIST
+/** The pages I visited last, newest first. */
+export function buildRecentUrl(workspaceId: string, limit?: number): string {
+  const base = API.WORKSPACES.RECENT(workspaceId)
+  return limit ? `${base}?${new URLSearchParams({ limit: String(limit) })}` : base
+}
+
+/** Title and text search in one workspace. */
+export function buildSearchUrl(workspaceId: string, q: string, limit?: number): string {
+  const params = new URLSearchParams({ q })
+  if (limit) params.set('limit', String(limit))
+  return `${API.WORKSPACES.SEARCH(workspaceId)}?${params}`
 }

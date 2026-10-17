@@ -82,6 +82,31 @@ def test_client_a_edits_and_client_b_receives(
             assert _doc_text(doc_a).count("<p>") == 2
 
 
+def test_late_client_receives_current_presence(
+    server: LiveServer, auth_client: httpx.Client
+) -> None:
+    """A client that connects later sees who is already on the page (F6)."""
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+    url = _collab_url(server, page["id"], _token_of(auth_client))
+
+    with connect(url, open_timeout=5) as conn_a:
+        doc_a, _ = doc_with_text()
+        yjs_sync(conn_a, doc_a)
+        yjs_send_awareness(conn_a, doc_a, name="Early Bird")
+
+        with connect(url, open_timeout=5) as conn_b:
+            doc_b, _ = doc_with_text()
+            saw_presence = False
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and not saw_presence:
+                message = conn_b.recv(timeout=5)
+                saw_presence = message[0] == 1 and b"Early Bird" in message
+            assert saw_presence, (
+                "the late client never learned the presence of the first"
+            )
+
+
 def test_reconnect_gets_the_persisted_state(
     server: LiveServer, auth_client: httpx.Client
 ) -> None:

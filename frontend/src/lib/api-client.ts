@@ -1,5 +1,5 @@
 import { getConfig } from './config'
-import { getAuthToken, clearAuthToken } from './auth'
+import { getAuthToken, clearAuthToken, announceAuthToken } from './auth'
 import { API } from './api-endpoints'
 
 interface ValidationIssue {
@@ -123,8 +123,12 @@ class ApiClient {
         // in routes/_authed/ send the user to /login. The message is fixed
         // because the backend's detail is meant for developers.
         // Only if this request's token is still the stored one: a late 401 for a
-        // replaced (revoked) session must not sign out the new session.
+        // replaced (revoked) session must not sign out the new session. When it
+        // is NOT stored anymore (another tab cleared or replaced it), still
+        // announce the change: this tab's cached token is stale and would keep
+        // the app on the page until a reload.
         if (getAuthToken() === token) clearAuthToken()
+        else announceAuthToken()
         throw new ApiError(response.status, SESSION_EXPIRED_MESSAGE, body?.error_code)
       }
       throw toApiError(response.status, body)
@@ -134,7 +138,10 @@ class ApiClient {
   }
 
   private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
-    return (await this.execute(endpoint, options)).json()
+    const response = await this.execute(endpoint, options)
+    // 204 No Content (e.g. PUT /pages/{id}/favorite) has no body to parse.
+    if (response.status === 204) return undefined as T
+    return response.json()
   }
 
   get<T>(endpoint: string) {

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
+import { HeadContent, Outlet, Scripts, createRootRoute } from '@tanstack/react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -19,13 +19,17 @@ const TanStackRouterDevtoolsPanel = lazyDev(() =>
   import('@tanstack/react-router-devtools').then(m => m.TanStackRouterDevtoolsPanel)
 )
 
-import { Layout } from '@/components/Layout'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Toaster } from '@/components/ui/sonner'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { ThemeProvider, THEME_KEY } from '@/contexts/ThemeContext'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { initWebVitals } from '@/lib/web-vitals'
+import { useDevtoolsEnabled } from '@/hooks/useDevtoolsEnabled'
 
 import appCss from '@/styles/app.css?url'
+
+const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem(${JSON.stringify(THEME_KEY)});var d=t==='dark'||((t===null||t==='system')&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(d){document.documentElement.classList.add('dark');document.documentElement.style.colorScheme='dark'}}catch(e){}})()`
 
 export const Route = createRootRoute({
   head: () => ({
@@ -38,7 +42,11 @@ export const Route = createRootRoute({
         content: 'width=device-width, initial-scale=1',
       },
       {
-        title: 'Full-Stack Template',
+        title: 'Notion',
+      },
+      {
+        name: 'theme-color',
+        content: '#ffffff',
       },
     ],
     links: [
@@ -46,7 +54,13 @@ export const Route = createRootRoute({
         rel: 'stylesheet',
         href: appCss,
       },
+      {
+        rel: 'icon',
+        href: '/favicon.ico',
+      },
     ],
+    // Sets the theme class before the first paint, so a dark-theme user sees no white flash.
+    scripts: [{ children: THEME_SCRIPT }],
   }),
 
   shellComponent: RootDocument,
@@ -71,33 +85,42 @@ function RootDocument() {
     initWebVitals()
   }, [])
 
+  // The floating devtools buttons sit on top of the app (sidebar, bottom corners): opt in only.
+  const devtools = useDevtoolsEnabled()
+
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
       <body>
         <QueryClientProvider client={queryClient}>
-          <AuthProvider queryClient={queryClient}>
-            <ErrorBoundary>
-              <Layout />
-            </ErrorBoundary>
-            <Toaster />
-            <React.Suspense>
-              <ReactQueryDevtools initialIsOpen={false} />
-              <TanStackDevtools
-                config={{
-                  position: 'bottom-right',
-                }}
-                plugins={[
-                  {
-                    name: 'Tanstack Router',
-                    render: <TanStackRouterDevtoolsPanel />,
-                  },
-                ]}
-              />
-            </React.Suspense>
-          </AuthProvider>
+          <ThemeProvider>
+            <TooltipProvider>
+              <AuthProvider queryClient={queryClient}>
+                <ErrorBoundary>
+                  <Outlet />
+                </ErrorBoundary>
+                <Toaster />
+                {devtools && (
+                  <React.Suspense>
+                    <ReactQueryDevtools initialIsOpen={false} />
+                    <TanStackDevtools
+                      config={{
+                        position: 'bottom-right',
+                      }}
+                      plugins={[
+                        {
+                          name: 'Tanstack Router',
+                          render: <TanStackRouterDevtoolsPanel />,
+                        },
+                      ]}
+                    />
+                  </React.Suspense>
+                )}
+              </AuthProvider>
+            </TooltipProvider>
+          </ThemeProvider>
         </QueryClientProvider>
         <Scripts />
       </body>

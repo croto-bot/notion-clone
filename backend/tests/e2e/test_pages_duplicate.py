@@ -6,7 +6,8 @@ import base64
 import threading
 from typing import TYPE_CHECKING
 
-from pycrdt import Doc, XmlFragment
+from pycrdt import Doc, XmlElement, XmlFragment, XmlText
+from websockets.sync.client import connect
 
 from tests.e2e.helpers import (
     assert_error,
@@ -16,6 +17,9 @@ from tests.e2e.helpers import (
     held_db_lock,
     make_member,
     wait_for_blocked_queries,
+    yjs_recv_update,
+    yjs_send_update,
+    yjs_sync,
 )
 
 if TYPE_CHECKING:
@@ -24,7 +28,7 @@ if TYPE_CHECKING:
     import httpx
 
     from tests.e2e.helpers import RegisteredUser
-    from tests.e2e.stack import Database
+    from tests.e2e.stack import Database, LiveServer
 
 
 def test_duplicate_copies_the_page_after_the_source(
@@ -174,6 +178,52 @@ def test_duplicate_copies_the_yjs_document(auth_client: httpx.Client) -> None:
     doc.apply_update(base64.b64decode(stored["state"]))
     fragment = doc.get("document-store", type=XmlFragment)
     assert "Duplicated body text" in str(fragment)
+
+
+def test_duplicate_copies_the_live_room_state_while_it_is_dirty(
+    server: LiveServer, auth_client: httpx.Client
+) -> None:
+    """A duplicate right after an edit, inside the collab room's ~1 s flush
+    debounce, must carry the live text into the copy: both its document and
+    the content_text that search reads."""
+    workspace = create_workspace(auth_client)
+    source = create_page(auth_client, workspace["id"], title="Dirty")
+    token = auth_client.headers["Authorization"].removeprefix("Bearer ")
+    socket_url = (
+        f"{server.base_url.replace('http://', 'ws://')}"
+        f"/pages/{source['id']}/collab?token={token}"
+    )
+
+    with connect(socket_url, open_timeout=5) as conn:
+        doc, _ = doc_with_text()
+        yjs_sync(conn, doc)
+        fragment = doc.get("document-store", type=XmlFragment)
+        with doc.transaction():
+            fragment.children.append(
+                XmlElement("p", contents=[XmlText("flushless-needle")])
+            )
+        yjs_send_update(conn, doc)
+        # Wait until the SERVER has applied the update, not just until our own
+        # local doc holds it: the room broadcasts every applied update back to
+        # all clients, so the echo on this connection is the proof. Duplicating
+        # before the echo would race the server's receive path, not the flush.
+        yjs_recv_update(conn, doc)
+
+        # Duplicate right after the server applied the edit, before the room's
+        # ~1 s flush debounce could persist it: the copy must carry the live text.
+        copy = auth_client.post(f"/pages/{source['id']}/duplicate").json()
+
+        stored_copy = auth_client.get(f"/pages/{copy['id']}/document").json()
+        copy_doc = Doc()
+        copy_doc.apply_update(base64.b64decode(stored_copy["state"]))
+        assert "flushless-needle" in str(
+            copy_doc.get("document-store", type=XmlFragment)
+        )
+
+        results = auth_client.get(
+            f"/workspaces/{workspace['id']}/search", params={"q": "flushless-needle"}
+        ).json()
+        assert copy["id"] in [result["id"] for result in results]
 
 
 def test_duplicate_of_a_trashed_page_is_rejected(auth_client: httpx.Client) -> None:

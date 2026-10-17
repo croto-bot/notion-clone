@@ -65,7 +65,14 @@ class StarletteChannel:
 
     async def send(self, message: bytes) -> None:
         async with self._send_lock:
-            await self._websocket.send_bytes(message)
+            try:
+                await self._websocket.send_bytes(message)
+            except (WebSocketDisconnect, RuntimeError):
+                # The socket closed under us (a client that left between two
+                # sends). Letting this raise tears down pycrdt's room task
+                # group and restarts the room on every late send; the client's
+                # own recv loop notices the disconnect and cleans it up.
+                return
 
     async def recv(self) -> bytes:
         try:

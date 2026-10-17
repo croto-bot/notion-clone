@@ -112,4 +112,8 @@ def test_public_database_lists_rows(
 
     assert body["kind"] == "database"
     assert [row["title"] for row in body["rows"]] == ["Row one"]
+    # Computed columns need the timestamps; without them every such column
+    # renders empty on the public page and filters on them hide every row.
+    assert body["rows"][0]["created_at"]
+    assert body["rows"][0]["last_edited_at"]
     assert body["database_schema"][0]["type"] == "title"

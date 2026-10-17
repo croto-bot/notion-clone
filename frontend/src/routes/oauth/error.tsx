@@ -28,10 +28,10 @@ function OAuthError() {
       title="Sign-in failed"
       description={message}
       footer={
-        <div className="mt-4 text-center text-sm">
+        <div className="mt-6 text-center text-[14px]">
           <Link
             to="/login"
-            className="text-primary hover:text-primary/80 underline-offset-4 hover:underline"
+            className="text-primary underline-offset-2 transition-colors duration-100 hover:underline"
           >
             Back to sign in
           </Link>
@@ -39,7 +39,7 @@ function OAuthError() {
       }
     >
       {error && (
-        <p className="text-center text-xs text-muted-foreground">
+        <p className="text-muted-foreground text-center text-[12px]">
           Error code: <code>{error}</code>
         </p>
       )}

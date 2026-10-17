@@ -15,6 +15,16 @@ function notifyAuthChange() {
   authChangeListeners.forEach(listener => listener())
 }
 
+/** Tells the auth subscribers to re-read the stored token.
+ *
+ * For a session another tab already cleared or replaced: this tab's cached
+ * snapshot is stale, and without a notification it never re-reads it (so a
+ * signed-out-everywhere user would stay on the page until reload).
+ */
+export function announceAuthToken() {
+  notifyAuthChange()
+}
+
 export function getAuthToken(): string | null {
   if (typeof localStorage === 'undefined') {
     return null
