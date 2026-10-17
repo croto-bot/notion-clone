@@ -2,8 +2,10 @@
 
 ``StarletteChannel`` adapts a Starlette/FastAPI ``WebSocket`` to pycrdt's
 ``Channel`` protocol (what ``YRoom.serve`` consumes). ``ReadOnlyChannel``
-drops a client's document (sync) messages while awareness keeps flowing, and
-``WriteTrackingChannel`` records who last sent a document update.
+drops a client's document (sync) messages while awareness keeps flowing,
+``WriteTrackingChannel`` records who last sent a document update, and
+``GuardedChannel`` re-checks write access before each document push a
+writable client sends.
 """
 
 from __future__ import annotations
@@ -115,6 +117,45 @@ class WriteTrackingChannel:
         return message
 
     def __aiter__(self) -> WriteTrackingChannel:
+        return self
+
+    async def __anext__(self) -> bytes:
+        return await self.recv()
+
+
+class GuardedChannel:
+    """Drops a writable client's document pushes once it may no longer write.
+
+    The connect-time check only guards the handshake: a page trashed or a
+    member demoted to viewer (or removed) after connecting must lose write
+    access from the next push on. Every state push (sync step 2 or update)
+    is preceded by a fresh access check; sync step 1 (asking for the
+    document) and awareness still flow, like for a read-only client.
+    """
+
+    def __init__(self, inner: Channel, may_write) -> None:  # noqa: ANN001 (callback)
+        self._inner = inner
+        self._may_write = may_write
+
+    @property
+    def path(self) -> str:
+        return self._inner.path
+
+    async def send(self, message: bytes) -> None:
+        await self._inner.send(message)
+
+    async def recv(self) -> bytes:
+        while True:
+            message = await self._inner.recv()  # StopAsyncIteration propagates
+            if message[0] == int(YMessageType.SYNC) and message[1] != int(
+                YSyncMessageType.SYNC_STEP1
+            ):
+                if not await self._may_write():
+                    continue  # dropped, like a read-only client's push
+                return message
+            return message
+
+    def __aiter__(self) -> GuardedChannel:
         return self
 
     async def __anext__(self) -> bytes:

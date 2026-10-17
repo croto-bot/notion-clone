@@ -15,6 +15,7 @@ from app.core.websockets import (
 from app.dependencies import get_db_session
 from app.modules.collab.channels import (
     Channel,
+    GuardedChannel,
     ReadOnlyChannel,
     StarletteChannel,
     WriteTrackingChannel,
@@ -75,8 +76,13 @@ async def collab_socket(
     if read_only:
         channel = ReadOnlyChannel(base)
     else:
-        channel = WriteTrackingChannel(
-            base, lambda: collab_server.note_write(page_id, user.id)
+        # Write access is re-checked on every push: trash or a demotion that
+        # happens after connect takes effect from the next message on.
+        channel = GuardedChannel(
+            WriteTrackingChannel(
+                base, lambda: collab_server.note_write(page_id, user.id)
+            ),
+            lambda: collab_server.may_write(page_id, user.id),
         )
 
     try:

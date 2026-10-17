@@ -224,6 +224,15 @@ class PageRepository(SQLAlchemyRepository[Page]):
         result = await self._session.execute(statement)
         return result.scalar_one_or_none()
 
+    async def access_fields(
+        self, page_id: uuid.UUID
+    ) -> tuple[uuid.UUID, datetime | None] | None:
+        """``workspace_id`` and ``deleted_at``: what the socket write-guard reads."""
+        statement = select(Page.workspace_id, Page.deleted_at).where(Page.id == page_id)
+        result = await self._session.execute(statement)
+        row = result.one_or_none()
+        return (row.workspace_id, row.deleted_at) if row is not None else None
+
     async def has_child(self, page_id: uuid.UUID) -> bool:
         """Whether any page sits directly under this one."""
         statement = select(Page.id).where(Page.parent_id == page_id).limit(1)

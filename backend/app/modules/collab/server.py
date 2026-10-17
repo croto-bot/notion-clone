@@ -163,6 +163,30 @@ class CollabServer:
         """Record the user who most recently sent a document update."""
         self._writers[str(page_id)] = user_id
 
+    async def may_write(self, page_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+        """Fresh write-access check for one incoming document push.
+
+        Read in its own short session: the connect-time check is long gone by
+        then. The page must be out of the trash and the member must still
+        have a write role, so a trash, demotion or removal after connect
+        takes effect from the client's next push.
+        """
+        from app.modules.pages.repository import PageRepository  # circular-safe
+        from app.modules.workspaces.models import WorkspaceRole
+        from app.modules.workspaces.repository import WorkspaceMemberRepository
+
+        async with _session_factory()() as session:
+            fields = await PageRepository(session).access_fields(page_id)
+            if fields is None:
+                return False
+            workspace_id, deleted_at = fields
+            if deleted_at is not None:
+                return False
+            member = await WorkspaceMemberRepository(session).get_membership(
+                workspace_id, user_id
+            )
+            return member is not None and member.role != WorkspaceRole.VIEWER
+
     def _touch(self, name: str) -> None:
         self._dirty.add(name)
         self._changes[name] = self._changes.get(name, 0) + 1

@@ -69,7 +69,9 @@ def test_client_a_edits_and_client_b_receives(
         with connect(url, open_timeout=5) as conn_b:
             doc_b, _ = doc_with_text()
             yjs_sync(conn_b, doc_b)
-            assert "Typed by client A" in _doc_text(doc_b)
+            # The server applies A's push asynchronously (write guard): wait
+            # for the broadcast instead of asserting on the sync reply.
+            yjs_wait_for(conn_b, doc_b, "Typed by client A")
 
             _edit(doc_b, "Typed by client B")
             yjs_send_update(conn_b, doc_b)
@@ -152,7 +154,9 @@ def test_viewer_edits_are_dropped_but_awareness_flows(
 
         viewer_doc, _ = doc_with_text()
         yjs_sync(viewer_conn, viewer_doc)
-        assert "Owner text" in _doc_text(viewer_doc)  # viewers still read
+        # The server applies the owner's push asynchronously (write guard), so
+        # wait for the broadcast instead of asserting on the sync reply.
+        yjs_wait_for(viewer_conn, viewer_doc, "Owner text")
 
         # The viewer's document updates are dropped...
         _edit(viewer_doc, "Viewer sabotage")
@@ -327,10 +331,93 @@ def _await_flushed(db: Database, page_id: str, needle: str) -> None:
     """Wait until the debounce loop has persisted ``needle`` (tick just ran)."""
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
-        row = db.fetch_one(
-            "SELECT content_text FROM pages WHERE id = %s", (page_id,)
-        )
+        row = db.fetch_one("SELECT content_text FROM pages WHERE id = %s", (page_id,))
         if needle in (row[0] or ""):
             return
         time.sleep(0.05)
     raise AssertionError(f"{needle!r} was never flushed")
+
+
+# --- write access is re-checked while the socket is open (review finding 2) -----
+
+
+def test_trash_while_socket_open_stops_the_writes(
+    server: LiveServer, auth_client: httpx.Client, db: Database
+) -> None:
+    """A page trashed after connect must not accept further edits.
+
+    The spec allows an open socket to stay connected, but the trashed page is
+    read-only: pushes that arrive after the delete are dropped, and only the
+    pre-trash edits are stored.
+    """
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+    url = _collab_url(server, page["id"], _token_of(auth_client))
+
+    with connect(url, open_timeout=5) as conn:
+        doc, _ = doc_with_text()
+        yjs_sync(conn, doc)
+        _edit(doc, "before the trash")
+        yjs_send_update(conn, doc)
+        yjs_wait_for(conn, doc, "before the trash")
+        _await_flushed(db, page["id"], "before the trash")  # stored before the delete
+        assert auth_client.delete(f"/pages/{page['id']}").status_code == 204
+        _edit(doc, "typed after the trash")
+        yjs_send_update(conn, doc)
+        time.sleep(0.3)  # the push is served (and dropped) by then
+        assert auth_client.post(f"/pages/{page['id']}/restore").status_code == 200
+    time.sleep(FLUSH_WAIT_S)
+
+    stored = auth_client.get(f"/pages/{page['id']}/document").json()
+    stored_doc = Doc()
+    stored_doc.apply_update(base64.b64decode(stored["state"]))
+    text = _doc_text(stored_doc)
+    assert "before the trash" in text
+    assert "typed after the trash" not in text
+
+
+def test_demotion_while_socket_open_stops_the_writes(
+    server: LiveServer,
+    auth_client: httpx.Client,
+    db: Database,
+    register_user: Callable[..., RegisteredUser],
+) -> None:
+    """An editor demoted to viewer after connect must not write either."""
+
+    workspace = create_workspace(auth_client)
+    editor = make_member(register_user, auth_client, workspace["id"], role="editor")
+    page = create_page(auth_client, workspace["id"])
+    url = _collab_url(server, page["id"], editor.session_id)
+
+    with connect(url, open_timeout=5) as conn:
+        doc, _ = doc_with_text()
+        yjs_sync(conn, doc)
+        _edit(doc, "as an editor")
+        yjs_send_update(conn, doc)
+        yjs_wait_for(conn, doc, "as an editor")
+        _await_flushed(db, page["id"], "as an editor")  # stored before the demotion
+        member_id = next(
+            member["user_id"]
+            for member in auth_client.get(
+                f"/workspaces/{workspace['id']}/members"
+            ).json()
+            if member["user_id"] == editor.id
+        )
+        assert (
+            auth_client.patch(
+                f"/workspaces/{workspace['id']}/members/{member_id}",
+                json={"role": "viewer"},
+            ).status_code
+            == 200
+        )
+        _edit(doc, "typed as a viewer")
+        yjs_send_update(conn, doc)
+        time.sleep(0.3)  # the push is served (and dropped) by then
+    time.sleep(FLUSH_WAIT_S)
+
+    stored = auth_client.get(f"/pages/{page['id']}/document").json()
+    stored_doc = Doc()
+    stored_doc.apply_update(base64.b64decode(stored["state"]))
+    text = _doc_text(stored_doc)
+    assert "as an editor" in text
+    assert "typed as a viewer" not in text
