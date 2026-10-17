@@ -651,6 +651,16 @@ class PageService(BaseService[Page]):
     ) -> list[SearchEntry]:
         await self._require_member(workspace_id, user_id)
         pages = await self.repo.search_pages(workspace_id, query, limit)
+        if not pages:
+            return []
+        # Breadcrumbs and has_children come from one workspace read: walking
+        # each hit's parents query by query is a query storm per keystroke.
+        # Live pages only, because a live page never has a trashed ancestor
+        # (a restore reparents to the root when the parent stayed trashed).
+        live = {page.id: page for page in await self.repo.live_pages(workspace_id)}
+        parent_ids = {
+            page.parent_id for page in live.values() if page.parent_id is not None
+        }
         entries = []
         for page in pages:
             content = page.content_text or ""
@@ -658,23 +668,32 @@ class PageService(BaseService[Page]):
                 snippet = _snippet(page.title, query)
             else:
                 snippet = _snippet(content, query)
+            chain: list[Breadcrumb] = []
+            current = live.get(page.parent_id) if page.parent_id else None
+            while current is not None:
+                chain.append(
+                    Breadcrumb(id=current.id, title=current.title, icon=current.icon)
+                )
+                current = live.get(current.parent_id) if current.parent_id else None
+            chain.reverse()
             entries.append(
                 SearchEntry(
                     page=page,
                     snippet=snippet,
-                    breadcrumbs=await self._breadcrumbs(page),
-                    has_children=await self._has_children(page.id),
+                    breadcrumbs=chain,
+                    has_children=page.id in parent_ids,
                 )
             )
         return entries
 
     async def database_rows(
         self, page_id: uuid.UUID, *, user_id: uuid.UUID
-    ) -> list[Page]:
-        page, _ = await self._access(page_id, user_id)
+    ) -> tuple[list[Page], WorkspaceRole]:
+        """A database's rows plus the caller's role (one membership read)."""
+        page, member = await self._access(page_id, user_id)
         if page.kind != PageKind.DATABASE:
             raise NotADatabaseError()
-        return await self.repo.database_rows(page_id)
+        return await self.repo.database_rows(page_id), member.role
 
     async def database_rows_of(self, page: Page) -> list[Page]:
         """Rows of a database page, without an access check (public pages)."""
@@ -683,12 +702,6 @@ class PageService(BaseService[Page]):
     async def detail_of(self, page: Page, member: WorkspaceMember) -> PageDetail:
         """Everything PageResponse adds around the row."""
         return await self._detail(page, member)
-
-    async def role_of_page(self, page: Page, user_id: uuid.UUID) -> WorkspaceRole:
-        member = await self.member_repo.get_membership(page.workspace_id, user_id)
-        if member is None:
-            raise NotFoundError(detail=f"Page {page.id} not found")
-        return member.role
 
     async def _require_member(
         self, workspace_id: uuid.UUID, user_id: uuid.UUID

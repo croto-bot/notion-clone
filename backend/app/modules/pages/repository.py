@@ -40,6 +40,20 @@ class PageRepository(SQLAlchemyRepository[Page]):
         result = await self._session.execute(statement)
         return list(result.scalars().all())
 
+    async def live_pages(self, workspace_id: uuid.UUID) -> list[Page]:
+        """Every non-trashed page of the workspace, database rows included.
+
+        One read for the features that need the whole live tree shape
+        (search breadcrumbs, has_children), instead of a query per parent hop.
+        """
+        statement = (
+            select(Page)
+            .where(Page.workspace_id == workspace_id, Page.deleted_at.is_(None))
+            .order_by(asc(Page.position), asc(Page.created_at))
+        )
+        result = await self._session.execute(statement)
+        return list(result.scalars().all())
+
     async def tree_pages(self, workspace_id: uuid.UUID) -> list[Page]:
         """All non-trashed pages except database rows, ordered by position."""
         database_ids = (
