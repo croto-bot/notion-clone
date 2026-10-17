@@ -274,7 +274,6 @@ export function useMovePage() {
     },
   })
   return {
-    ...mutation,
     mutateAsync: (variables: { id: string } & MovePageData) =>
       trackPageMutation(variables.id, () => mutation.mutateAsync(variables)),
   }
@@ -316,7 +315,6 @@ export function useDeletePage() {
     },
   })
   return {
-    ...mutation,
     mutateAsync: (id: string) => trackPageMutation(id, () => mutation.mutateAsync(id)),
   }
 }
@@ -331,7 +329,6 @@ export function useRestorePage() {
     },
   })
   return {
-    ...mutation,
     mutateAsync: (id: string) => trackPageMutation(id, () => mutation.mutateAsync(id)),
   }
 }
@@ -346,7 +343,6 @@ export function usePurgePage() {
     },
   })
   return {
-    ...mutation,
     mutateAsync: (id: string) => trackPageMutation(id, () => mutation.mutateAsync(id)),
   }
 }
