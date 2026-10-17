@@ -81,6 +81,12 @@ class CommentService(BaseService[Comment]):
         page, _member = await self._access_page(page_id, user_id)
         if page.deleted_at is not None:
             raise PageInTrashError()
+        if payload.parent_id is not None:
+            # A reply hangs under a discussion of the same page: a comment id
+            # from any other page (or workspace) is not a visible parent.
+            parent = await self.repo.get(payload.parent_id, raise_error=False)
+            if parent is None or parent.page_id != page_id:
+                raise NotFoundError(detail=f"Comment {payload.parent_id} not found")
         created = await self.repo.create(
             {
                 "page_id": page_id,

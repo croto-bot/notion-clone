@@ -306,8 +306,17 @@ class PageRepository(SQLAlchemyRepository[Page]):
         return (row.workspace_id, row.deleted_at) if row is not None else None
 
     async def has_child(self, page_id: uuid.UUID) -> bool:
-        """Whether any page sits directly under this one."""
-        statement = select(Page.id).where(Page.parent_id == page_id).limit(1)
+        """Whether a live page sits directly under this one.
+
+        Trashed children do not count: the sidebar shows no expander for them
+        (GET /pages/{id} and search consume this; page-tree computes it from
+        its own live set).
+        """
+        statement = (
+            select(Page.id)
+            .where(Page.parent_id == page_id, Page.deleted_at.is_(None))
+            .limit(1)
+        )
         result = await self._session.execute(statement)
         return result.scalar_one_or_none() is not None
 

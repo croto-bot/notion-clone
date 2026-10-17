@@ -258,3 +258,19 @@ def test_concurrent_creates_under_one_parent_get_distinct_positions(
     )
     assert len(rows) == 4
     assert len({row[0] for row in rows}) == 4, rows
+
+
+def test_has_children_ignores_trashed_children(auth_client: httpx.Client) -> None:
+    """GET /pages/{id} reports expander state: no live child, no expander.
+
+    Review finding 12: the child count included trashed pages, so the client
+    showed an expander with no rows under it.
+    """
+    workspace = create_workspace(auth_client)
+    parent = create_page(auth_client, workspace["id"], title="Parent")
+    child = create_page(
+        auth_client, workspace["id"], parent_id=parent["id"], title="Child"
+    )
+    assert auth_client.delete(f"/pages/{child['id']}").status_code == 204
+
+    assert auth_client.get(f"/pages/{parent['id']}").json()["has_children"] is False
