@@ -111,3 +111,26 @@ def test_viewer_cannot_unfavorite(
 
     favorites = auth_client.get(f"/workspaces/{workspace['id']}/favorites").json()
     assert [p["id"] for p in favorites] == [page["id"]]
+
+
+def test_favorite_twice_is_a_no_op(auth_client: httpx.Client) -> None:
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+    assert auth_client.put(f"/pages/{page['id']}/favorite").status_code == 204
+
+    response = auth_client.put(f"/pages/{page['id']}/favorite")
+
+    assert response.status_code == 204
+    favorites = auth_client.get(f"/workspaces/{workspace['id']}/favorites").json()
+    assert [favorite["id"] for favorite in favorites] == [page["id"]]
+
+
+def test_favorite_a_trashed_page_is_rejected(auth_client: httpx.Client) -> None:
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+    auth_client.delete(f"/pages/{page['id']}")
+
+    response = auth_client.put(f"/pages/{page['id']}/favorite")
+
+    assert_error(response, 400, "page_in_trash")
+    assert auth_client.get(f"/workspaces/{workspace['id']}/favorites").json() == []

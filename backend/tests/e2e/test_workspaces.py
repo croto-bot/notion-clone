@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import threading
+from typing import TYPE_CHECKING, Any
 
 from tests.e2e.helpers import (
     assert_error,
     create_workspace,
+    held_db_lock,
     make_member,
     unique_email,
+    wait_for_blocked_queries,
 )
 
 if TYPE_CHECKING:
@@ -17,6 +20,7 @@ if TYPE_CHECKING:
     import httpx
 
     from tests.e2e.helpers import RegisteredUser
+    from tests.e2e.stack import Database
 
 
 def test_create_returns_the_workspace_with_owner_role(
@@ -125,3 +129,31 @@ def test_unknown_user_cannot_be_found_by_email(auth_client: httpx.Client) -> Non
         json={"email": unique_email("ghost"), "role": "viewer"},
     )
     assert_error(response, 404, "user_not_found")
+
+
+def test_get_racing_the_workspace_delete_is_404(
+    auth_client: httpx.Client, db: Database
+) -> None:
+    """The membership is read first, then the workspace: a delete that commits
+    between the two reads answers 404, not 500.
+
+    A held table lock parks the workspace read after the membership read;
+    the lock holder deletes the workspace (its members go with it).
+    """
+    workspace = create_workspace(auth_client)
+    box: dict[str, Any] = {}
+
+    def _get() -> None:
+        box["response"] = auth_client.get(f"/workspaces/{workspace['id']}")
+
+    with held_db_lock(db, "LOCK TABLE workspaces IN ACCESS EXCLUSIVE MODE") as conn:
+        thread = threading.Thread(target=_get)
+        thread.start()
+        wait_for_blocked_queries(db, count=1, needle="FROM workspaces")
+        conn.execute("DELETE FROM workspaces WHERE id = %s", (workspace["id"],))
+    thread.join(timeout=30)
+
+    assert_error(
+        box["response"], 404, "not_found", f"Workspace {workspace['id']} not found"
+    )
+    assert auth_client.get("/workspaces").json() == []

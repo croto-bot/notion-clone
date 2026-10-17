@@ -2,7 +2,7 @@
 	backend-shell backend-dev backend-install backend-format backend-lint backend-lint-fix backend-check backend-typecheck \
 	frontend-shell frontend-dev frontend-install frontend-build frontend-lint frontend-lint-fix frontend-format frontend-format-check frontend-typecheck \
 	migrate migrate-create migrate-rollback migrate-history migrate-current db-shell db-reset \
-	test test-backend test-backend-cov test-e2e lint lint-fix format typecheck check ci quality \
+	test test-backend test-backend-cov test-e2e test-e2e-cov lint lint-fix format typecheck check ci quality \
 	pre-commit-install pre-commit-run setup check-ports start stop restart-all dev dev-backend dev-fresh api-docs api-health \
 	demo-videos demo-check
 
@@ -168,11 +168,14 @@ test: ## Run both end-to-end suites (backend API, then full-stack browser)
 test-backend: ## Backend e2e suite: Postgres container + migrations + live API (needs Docker)
 	cd backend && uv run pytest
 
-test-backend-cov: ## Backend e2e suite with an app/ coverage report (htmlcov/)
-	cd backend && uv run pytest --cov=app --cov-report=html --cov-report=term
+test-backend-cov: ## Backend e2e suite with an app/ line + branch coverage report (backend/htmlcov/)
+	cd backend && uv run pytest --cov=app --cov-report=html --cov-report=term-missing:skip-covered
 
 test-e2e: ## Full-stack e2e: Postgres + backend + Vite + Playwright (needs Docker, uv, bun, chromium)
 	cd frontend && bun run test:e2e
+
+test-e2e-cov: ## Full-stack e2e with a browser JS coverage report of frontend/src (frontend/coverage/)
+	cd frontend && E2E_COVERAGE=1 bun run test:e2e
 
 lint: ## Run all linters
 	$(MAKE) backend-lint

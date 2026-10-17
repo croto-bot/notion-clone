@@ -57,7 +57,7 @@ Open http://localhost:3000 and create an account. The API is on http://localhost
 
 ## Testing
 
-Every test drives the real system: there are no unit tests and no mocks. The backend suite sends HTTP and WebSocket requests to a live server on a real Postgres. The browser suite runs Playwright against the real frontend, backend and database, including two people editing one page. `make test` runs both suites, and [Tests](#tests) has the details.
+Every test drives the real system: there are no unit tests and no mocks. The backend suite sends HTTP and WebSocket requests to a live server on a real Postgres. The browser suite runs Playwright against the real frontend, backend and database, including two people editing one page. `make test` runs both suites, and [Tests](#tests) has the details. The coverage is measured, not claimed: the backend suite runs 95.32% of the backend's lines and the browser suite runs 98.43% of `frontend/src/` ([Coverage](#coverage)).
 
 **Working with an AI agent?** It starts at [AGENTS.md](AGENTS.md). Code standards for agents and people: `.claude/skills/project-standards/SKILL.md`.
 
@@ -129,7 +129,7 @@ Docker Compose does **not** read `backend/.env`. The backend container gets its 
 |---|---|---|
 | `BACKEND_PORT`, `FRONTEND_PORT`, `DB_PORT` | `9095`, `3000`, `5432` | Host ports. Check what is free: `make check-ports` |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | the project name (`app` in the raw template; `ai-fsr init` sets them) | Used by `db`, and to build the backend `DB_URL` (host `db`) |
-| `DB_URL` | built from `POSTGRES_*` | Not in `.env.example`. Set it only for an external Postgres, or when the password has `@ : / # %` (URL-encode them) |
+| `DB_URL` | built from `POSTGRES_*` | Not in `.env.example`. Set it only for an external Postgres, or when the password has `@ : / # %` (URL-encode them). Accepted schemes: `postgresql://`, `postgres://`, `postgresql+asyncpg://`, `postgresql+psycopg://` (the app and Alembic accept the same forms) |
 | `DB_POOL_SIZE`, `DB_POOL_PRE_PING` | `100`, `false` | SQLAlchemy pool |
 | `APP_NAME`, `ENVIRONMENT`, `DEBUG_MODE` | `backend`, `local`, `false` | Sentry is off when `ENVIRONMENT=local` |
 | `LOG_LEVEL`, `LOG_FORMAT` | `INFO`, `console` | `json` = one wide event per request, for log shipping |
@@ -159,11 +159,38 @@ make test-backend     # API suite: Postgres (testcontainers) + migrations + live
 make test-e2e         # browser suite: Postgres + backend + Vite + Playwright (needs Docker, uv, bun, Chromium)
 make check            # every static check: ruff, ESLint, prettier, tsc, build, demo scripts
 make ci               # check + test
+make test-backend-cov # backend suite + line and branch coverage of backend/app/ (backend/htmlcov/)
+make test-e2e-cov     # browser suite + JS coverage of frontend/src/ (frontend/coverage/)
 ```
 
 First Playwright run: `cd frontend && bunx playwright install --with-deps chromium`. The suites use their own ports (55432, 59095, 53000) and never touch the dev stack. The e2e frontend turns off the TanStack devtools event bus (fixed port 42069), so `bun run dev` can stay up.
 
 Where tests go and how to write them: [AGENTS.md](AGENTS.md#testing-end-to-end-only) and `.claude/skills/project-standards/references/e2e-testing.md`.
+
+### Coverage
+
+Measured on 2026-10-17:
+
+| Suite | Command | Tests | Lines | Branches |
+|---|---|---|---|---|
+| Backend (`backend/app/`, the live server process included) | `make test-backend-cov` | 304 | 95.32% (3405 of 3572) | 80.91% (500 of 618) |
+| Browser (`frontend/src/`) | `make test-e2e-cov` | 151 | 98.43% (3529 of 3585) | 85.95% (1854 of 2157) |
+
+The backend report is `backend/htmlcov/index.html`. The browser report is `frontend/coverage/index.html` (also `lcov.info` and `coverage-summary.json`): Playwright's `page.coverage` records the V8 coverage of every page, and `monocart-coverage-reports` maps it to `src/` through the Vite dev server's source maps. A `src/` file that no test loads counts as 0%. A few paths depend on timing (a socket that reconnects, a request that loses a race), so the browser numbers can move by a few lines from run to run. `E2E_COVERAGE=1` makes the browser slower, so in that mode each test and each `expect` gets three times as long.
+
+The lines no test runs, and why:
+
+| Where | Why no test runs it |
+|---|---|
+| `backend/app/repositories/`, `services/base_crud_service.py`, `core/filters.py`, `database/db/` | The shared base classes that the standards tell each new entity to use. No feature calls these generic methods yet. |
+| `backend/app/user/auth/service.py`, `user/service.py` | The success path of Google sign-in. It needs Google; the suite never fakes it (`KNOWN_GAPS` in `backend/tests/e2e/guards.py`). |
+| `backend/app/main.py` | Sentry setup: it runs only with `SENTRY_DSN`. |
+| `backend/app/modules/pages/ordering.py` | Guards for order keys that the API never makes (an exhausted key, a reversed pair). |
+| `backend/app/modules/events/bus.py` | A subscriber whose queue is full. A real socket reader empties it first. |
+| `frontend/src/lib/clipboard.ts`, `lib/client-id.ts` | Fallbacks for an insecure origin (plain http on a host that is not `localhost`/`127.0.0.1`). The suite runs on `127.0.0.1`, a secure origin. |
+| `frontend/src/components/ErrorBoundary.tsx` | Shows only when a render throws. No user action makes the app throw. |
+| `frontend/src/contexts/WorkspaceContext.tsx` | The screens for a failed workspace load or create. They need a backend 5xx, and the suite does not inject faults. |
+| `frontend/src/lib/error-handler.ts`, `lib/auth.ts` | A thrown value that is not an `Error`; a 401 that arrives after another tab already replaced the session (a race the suite cannot time without network interception). |
 
 ## Record the demo videos
 

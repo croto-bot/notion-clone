@@ -26,12 +26,23 @@ class Base(DeclarativeBase):
         return cls.__tablename__.capitalize()
 
 
+# The plain forms, plus the two driver forms this app itself uses: a DB_URL
+# copied from the async engine (postgresql+asyncpg://) must work for Alembic
+# too, and the psycopg form for the app.
+_POSTGRES_SCHEMES = (
+    "postgresql+asyncpg://",
+    "postgresql+psycopg://",
+    "postgresql://",
+    "postgres://",
+)
+
+
 def _require_postgres_url(db_url: str) -> str:
     """Return the scheme-less rest of a Postgres URL; reject any other database.
 
     The template is Postgres-only (asyncpg for the app, psycopg for Alembic).
     """
-    for scheme in ("postgres://", "postgresql://"):
+    for scheme in _POSTGRES_SCHEMES:
         if db_url.startswith(scheme):
             return db_url.removeprefix(scheme)
     raise ValueError(
@@ -40,16 +51,12 @@ def _require_postgres_url(db_url: str) -> str:
 
 
 def _convert_url_to_async(db_url: str) -> str:
-    """Convert a plain Postgres URL to the asyncpg driver (postgresql+asyncpg://)."""
-    if db_url.startswith("postgresql+asyncpg://"):
-        return db_url
+    """Convert an accepted Postgres URL to the asyncpg driver URL."""
     return f"postgresql+asyncpg://{_require_postgres_url(db_url)}"
 
 
 def _convert_url_to_sync(db_url: str) -> str:
-    """Convert a plain Postgres URL to the psycopg driver (postgresql+psycopg://)."""
-    if db_url.startswith("postgresql+psycopg://"):
-        return db_url
+    """Convert an accepted Postgres URL to the psycopg (sync) driver URL."""
     return f"postgresql+psycopg://{_require_postgres_url(db_url)}"
 
 

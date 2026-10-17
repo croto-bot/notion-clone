@@ -71,6 +71,7 @@
     "eslint-plugin-jsx-a11y": "6.10.2",
     "eslint-plugin-react": "7.37.5",
     "eslint-plugin-react-hooks": "7.0.1",
+    "monocart-coverage-reports": "2.13.2",
     "prettier": "3.8.1",
     "typescript": "5.7.2",
     "typescript-eslint": "8.54.0",

@@ -171,3 +171,33 @@ def test_membership_gives_the_workspace_role_in_workspaces(
     listed = viewer.client.get("/workspaces").json()
 
     assert [w["role"] for w in listed if w["id"] == workspace["id"]] == ["viewer"]
+
+
+def test_change_role_of_a_non_member_is_404(
+    auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
+) -> None:
+    workspace = create_workspace(auth_client)
+    outsider = register_user()
+
+    response = auth_client.patch(
+        f"/workspaces/{workspace['id']}/members/{outsider.id}", json={"role": "editor"}
+    )
+
+    assert_error(response, 404, "not_found", f"Member {outsider.id} not found")
+    members = auth_client.get(f"/workspaces/{workspace['id']}/members").json()
+    assert outsider.id not in {member["user_id"] for member in members}
+
+
+def test_remove_a_non_member_is_404(
+    auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
+) -> None:
+    workspace = create_workspace(auth_client)
+    outsider = register_user()
+
+    response = auth_client.delete(
+        f"/workspaces/{workspace['id']}/members/{outsider.id}"
+    )
+
+    assert_error(response, 404, "not_found", f"Member {outsider.id} not found")
+    members = auth_client.get(f"/workspaces/{workspace['id']}/members").json()
+    assert len(members) == 1

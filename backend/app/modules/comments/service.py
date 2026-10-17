@@ -115,8 +115,6 @@ class CommentService(BaseService[Comment]):
         if "resolved" in values:
             if member.role == WorkspaceRole.VIEWER:
                 raise ForbiddenError(detail="Only editors can resolve comments")
-        if not values:
-            values = {}
         updated = await self.repo.update(comment_id, values)
         self._log_entity(comment_id)
         self._publish(page.workspace_id, user_id, page.id)

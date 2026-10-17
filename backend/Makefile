@@ -67,7 +67,7 @@ test:
 
 # Same, with a coverage report of app/ (the server process is measured too)
 test-cov:
-	uv run pytest --cov=app --cov-report=html --cov-report=term
+	uv run pytest --cov=app --cov-report=html --cov-report=term-missing:skip-covered
 	@echo "Coverage report generated in htmlcov/"
 
 # Apply database migrations

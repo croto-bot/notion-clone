@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 
 from tests.e2e.helpers import (
@@ -212,3 +213,59 @@ def test_reply_parent_must_belong_to_the_same_page(
     assert_error(response, 404, "not_found")
     listed = auth_client.get(f"/pages/{home_page['id']}/comments").json()
     assert [comment["body"] for comment in listed] == []
+
+
+def test_comment_on_a_missing_page_is_404(auth_client: httpx.Client) -> None:
+    missing = str(uuid.uuid4())
+
+    response = auth_client.post(f"/pages/{missing}/comments", json={"body": "Hello"})
+
+    assert_error(response, 404, "not_found", f"Page {missing} not found")
+    assert_error(auth_client.get(f"/pages/{missing}/comments"), 404, "not_found")
+
+
+def test_edit_or_delete_a_missing_comment_is_404(auth_client: httpx.Client) -> None:
+    missing = str(uuid.uuid4())
+
+    edited = auth_client.patch(f"/comments/{missing}", json={"body": "New"})
+    deleted = auth_client.delete(f"/comments/{missing}")
+
+    assert_error(edited, 404, "not_found", f"Comment {missing} not found")
+    assert_error(deleted, 404, "not_found", f"Comment {missing} not found")
+
+
+def test_non_member_cannot_touch_a_comment(
+    auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
+) -> None:
+    """A comment of a workspace the user is not in is a 404, like a missing one."""
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+    comment = auth_client.post(
+        f"/pages/{page['id']}/comments", json={"body": "Private"}
+    ).json()
+    stranger = register_user().client
+
+    edited = stranger.patch(f"/comments/{comment['id']}", json={"resolved": True})
+    deleted = stranger.delete(f"/comments/{comment['id']}")
+
+    assert_error(edited, 404, "not_found", f"Comment {comment['id']} not found")
+    assert_error(deleted, 404, "not_found", f"Comment {comment['id']} not found")
+    listed = auth_client.get(f"/pages/{page['id']}/comments").json()
+    assert [(c["body"], c["resolved"]) for c in listed] == [("Private", False)]
+
+
+def test_empty_patch_changes_nothing(auth_client: httpx.Client) -> None:
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+    comment = auth_client.post(
+        f"/pages/{page['id']}/comments", json={"body": "Unchanged"}
+    ).json()
+
+    response = auth_client.patch(f"/comments/{comment['id']}", json={})
+
+    assert response.status_code == 200
+    assert (response.json()["body"], response.json()["edited"]) == ("Unchanged", False)
+    listed = auth_client.get(f"/pages/{page['id']}/comments").json()
+    assert [(c["body"], c["edited"], c["resolved"]) for c in listed] == [
+        ("Unchanged", False, False)
+    ]

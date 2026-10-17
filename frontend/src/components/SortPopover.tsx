@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { ArrowUpDown, Plus, X } from 'lucide-react'
 import { selectClass } from '@/components/FilterPopover'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -12,8 +12,12 @@ export function SortPopover() {
   const sorts = view.sorts
   // The popover's selects change in quick succession and each change closes
   // over this state, so keep the latest view in a ref: a slow render between
-  // two changes must not drop the first one.
+  // two changes must not drop the first one. The ref follows the view the
+  // database shows: another view, or a sort saved meanwhile, replaces it.
   const viewRef = useRef(view)
+  useEffect(() => {
+    viewRef.current = view
+  }, [view])
   const setSorts = (next: ViewSort[]) => {
     viewRef.current = { ...viewRef.current, sorts: next }
     updateView(viewRef.current)
@@ -57,7 +61,7 @@ export function SortPopover() {
                 disabled={!editable}
                 onChange={event =>
                   setSorts(
-                    sorts.map((item, i) =>
+                    viewRef.current.sorts.map((item, i) =>
                       i === index ? { ...item, property_id: event.target.value } : item
                     )
                   )
@@ -76,7 +80,7 @@ export function SortPopover() {
                 disabled={!editable}
                 onChange={event =>
                   setSorts(
-                    sorts.map((item, i) =>
+                    viewRef.current.sorts.map((item, i) =>
                       i === index
                         ? { ...item, direction: event.target.value as SortDirection }
                         : item
@@ -92,7 +96,7 @@ export function SortPopover() {
                 <button
                   type="button"
                   aria-label="Remove sort"
-                  onClick={() => setSorts(sorts.filter((_, i) => i !== index))}
+                  onClick={() => setSorts(viewRef.current.sorts.filter((_, i) => i !== index))}
                   className="text-muted-foreground hover:bg-hover grid size-7 shrink-0 place-items-center rounded-[4px]"
                 >
                   <X className="size-4" />

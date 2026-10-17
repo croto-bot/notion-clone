@@ -26,24 +26,15 @@ export function announceAuthToken() {
 }
 
 export function getAuthToken(): string | null {
-  if (typeof localStorage === 'undefined') {
-    return null
-  }
   return localStorage.getItem(AUTH_TOKEN_KEY)
 }
 
 export function setAuthToken(token: string): void {
-  if (typeof localStorage === 'undefined') {
-    return
-  }
   localStorage.setItem(AUTH_TOKEN_KEY, token)
   notifyAuthChange()
 }
 
 export function clearAuthToken(): void {
-  if (typeof localStorage === 'undefined') {
-    return
-  }
   localStorage.removeItem(AUTH_TOKEN_KEY)
   notifyAuthChange()
 }

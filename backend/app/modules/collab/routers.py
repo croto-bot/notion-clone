@@ -88,10 +88,10 @@ async def collab_socket(
             lambda: collab_server.note_write(page_id, user.id, client_id=tab),
         )
 
+    # serve() never raises: the room's exception_handler (pycrdt's
+    # exception_logger) logs and discards every error, a broken socket too.
     try:
         await room.serve(channel)
-    except Exception:  # noqa: BLE001 - a broken socket must not kill the app
-        pass
     finally:
         if not read_only:
             # The last disconnect persists right away (no debounce wait).

@@ -162,8 +162,6 @@ class DocumentUpdate(BaseModel):
     @field_validator("state", mode="before")
     @classmethod
     def decode_base64(cls, value: Any) -> bytes:
-        if isinstance(value, bytes):
-            return value
         import base64
         import binascii
 

@@ -6,16 +6,22 @@ import {
   createWorkspace,
   deleteWorkspace,
   ensureWorkspace,
+  errorToast,
   getMe,
   listMembers,
   listWorkspaces,
+  liveEventsSettled,
+  loginUser,
   openWorkspaceMenu,
   PASSWORD,
   registerUser,
+  revokeSession,
   sidebar,
+  storedToken,
   uniqueEmail,
   updateMe,
   updateWorkspace,
+  type Page,
 } from './fixtures'
 
 test.describe('workspaces (F2, F3, F17)', () => {
@@ -211,5 +217,204 @@ test.describe('workspaces (F2, F3, F17)', () => {
     await name.fill('Ada Lovelace')
     await name.press('Enter')
     await expect.poll(async () => (await getMe(api, user)).display_name).toBe('Ada Lovelace')
+  })
+})
+
+test.describe('workspaces: refused changes in settings (coverage)', () => {
+  test('refuses an unknown invitee, the last owner leaving and demoting the last owner', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    await updateMe(api, user, { display_name: 'Olive Owner' })
+    await page.goto('/home')
+    await sidebar(page).getByRole('button', { name: 'Settings' }).click()
+    const settings = page.getByRole('dialog', { name: 'Settings' })
+    await settings.getByRole('button', { name: 'Members' }).click()
+
+    const stranger = uniqueEmail('nobody')
+    await settings.getByLabel('Email address').fill(stranger)
+    await settings.getByRole('button', { name: 'Invite' }).click()
+    await expect(errorToast(page).filter({ hasText: 'Could not add the member' })).toBeVisible()
+    await expect(settings.getByLabel('Email address')).toHaveValue(stranger)
+
+    // The only owner can neither leave nor give up the owner role.
+    await settings.getByRole('button', { name: 'Leave workspace' }).click()
+    await expect(
+      errorToast(page).filter({ hasText: 'Could not leave the workspace' })
+    ).toBeVisible()
+    await settings.getByRole('button', { name: 'Role of Olive Owner' }).click()
+    await page.getByRole('menuitem', { name: /Can edit/ }).click()
+    await expect(errorToast(page).filter({ hasText: 'Could not change the role' })).toBeVisible()
+    await expect(settings.getByRole('button', { name: 'Role of Olive Owner' })).toContainText(
+      'Full access'
+    )
+
+    const members = await listMembers(api, user, workspace.id)
+    expect(members.map(member => [member.email, member.role])).toEqual([[user.email, 'owner']])
+  })
+
+  test('cancelling the delete confirmation forgets the typed name', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    await page.goto('/home')
+    await sidebar(page).getByRole('button', { name: 'Settings' }).click()
+    const settings = page.getByRole('dialog', { name: 'Settings' })
+    await settings.getByRole('button', { name: 'Workspace' }).click()
+    await settings.getByRole('button', { name: 'Delete entire workspace' }).click()
+    const confirm = page.getByRole('alertdialog')
+    const typed = confirm.getByLabel('Type the workspace name to confirm')
+    await typed.fill(workspace.name)
+    await expect(confirm.getByRole('button', { name: 'Delete workspace' })).toBeEnabled()
+    await confirm.getByRole('button', { name: 'Cancel' }).click()
+    await expect(confirm).toBeHidden()
+
+    await settings.getByRole('button', { name: 'Delete entire workspace' }).click()
+    await expect(typed).toHaveValue('')
+    await expect(confirm.getByRole('button', { name: 'Delete workspace' })).toBeDisabled()
+    expect((await listWorkspaces(api, user)).map(item => item.id)).toContain(workspace.id)
+  })
+
+  test('logs out from the account settings', async ({ authedPage: page, api, user }) => {
+    await ensureWorkspace(api, user)
+    await page.goto('/home')
+    await sidebar(page).getByRole('button', { name: 'Settings' }).click()
+    const settings = page.getByRole('dialog', { name: 'Settings' })
+    await settings.getByRole('button', { name: 'Log out' }).click()
+    await expect(page).toHaveURL('/login')
+    await expect(settings).toBeHidden()
+    await expect.poll(() => storedToken(page)).toBeNull()
+    const me = await api.get('/users/me', { headers: authHeaders(user) })
+    expect(me.status()).toBe(401)
+  })
+
+  // Each change is sent after the session ended on another device: the server
+  // refuses it (401), the app says what failed and goes to the login page.
+  const refused: {
+    name: string
+    title: string
+    /** Opens the right tab: before the session ends, so only the change itself is refused. */
+    tab: 'My account' | 'Workspace' | 'Members'
+    /** Steps that send nothing, done while the session still works. */
+    prepare?: (page: Page, workspaceName: string) => Promise<void>
+    act: (page: Page, guestName: string) => Promise<void>
+  }[] = [
+    {
+      name: 'renaming the account',
+      title: 'Could not update your name',
+      tab: 'My account',
+      act: async page => {
+        const name = page.getByRole('dialog', { name: 'Settings' }).getByLabel('Preferred name')
+        await name.fill('Too late')
+        await name.press('Enter')
+      },
+    },
+    {
+      name: 'renaming the workspace',
+      title: 'Could not rename the workspace',
+      tab: 'Workspace',
+      act: async page => {
+        const settings = page.getByRole('dialog', { name: 'Settings' })
+        await settings.getByLabel('Workspace name').fill('Too late')
+        await settings.getByLabel('Workspace name').press('Enter')
+      },
+    },
+    {
+      name: 'changing the workspace icon',
+      title: 'Could not change the icon',
+      tab: 'Workspace',
+      act: async page => {
+        const settings = page.getByRole('dialog', { name: 'Settings' })
+        await settings.getByRole('button', { name: 'Change workspace icon' }).click()
+        await settings.locator('button[frimousse-emoji]:visible').first().click()
+      },
+    },
+    {
+      name: 'deleting the workspace',
+      title: 'Could not delete the workspace',
+      tab: 'Workspace',
+      prepare: async (page, workspaceName) => {
+        const settings = page.getByRole('dialog', { name: 'Settings' })
+        await settings.getByRole('button', { name: 'Delete entire workspace' }).click()
+        const confirm = page.getByRole('alertdialog')
+        await confirm.getByLabel('Type the workspace name to confirm').fill(workspaceName)
+        await expect(confirm.getByRole('button', { name: 'Delete workspace' })).toBeEnabled()
+      },
+      act: async page => {
+        await page
+          .getByRole('alertdialog')
+          .getByRole('button', { name: 'Delete workspace' })
+          .click()
+      },
+    },
+    {
+      name: 'removing a member',
+      title: 'Could not remove the member',
+      tab: 'Members',
+      act: async (page, guestName) => {
+        const settings = page.getByRole('dialog', { name: 'Settings' })
+        await settings.getByRole('button', { name: `Remove ${guestName}` }).click()
+      },
+    },
+  ]
+  for (const { name, title, tab, prepare, act } of refused) {
+    test(`${name} after the session ended elsewhere shows the error`, async ({
+      authedPage: page,
+      api,
+      user,
+    }) => {
+      const workspace = await ensureWorkspace(api, user)
+      const guest = await registerUser(api, uniqueEmail('guest'), PASSWORD, 'Gus Guest')
+      await addMember(api, user, workspace.id, guest)
+      const live = liveEventsSettled(page, workspace.id)
+      await page.goto('/home')
+      await sidebar(page).getByRole('button', { name: 'Settings' }).click()
+      const settings = page.getByRole('dialog', { name: 'Settings' })
+      await settings.getByRole('button', { name: tab, exact: true }).click()
+      await expect(settings.getByRole('heading', { name: tab })).toBeVisible()
+      if (tab === 'Members') await expect(settings.getByText(guest.email)).toBeVisible()
+      await prepare?.(page, workspace.name)
+
+      await live
+      await revokeSession(api, user)
+      await act(page, guest.displayName)
+
+      await expect(errorToast(page)).toContainText(title)
+      await expect(errorToast(page)).toContainText('Your session has expired')
+      await expect(page).toHaveURL(/\/login/)
+      // Nothing changed on the server.
+      const owner = { token: await loginUser(api, user.email, user.password) }
+      expect(await listWorkspaces(api, owner)).toEqual([workspace])
+      expect((await listMembers(api, owner, workspace.id)).map(member => member.email)).toContain(
+        guest.email
+      )
+    })
+  }
+
+  test('creating a workspace after the session ended elsewhere shows the error', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const live = liveEventsSettled(page, workspace.id)
+    await page.goto('/home')
+    await openWorkspaceMenu(page)
+    await page.getByRole('button', { name: 'New workspace' }).click()
+    const dialog = page.getByRole('dialog', { name: 'New workspace' })
+    await dialog.getByLabel('Workspace name').fill('Never made')
+
+    await live
+    await revokeSession(api, user)
+    await dialog.getByRole('button', { name: 'Create workspace' }).click()
+
+    await expect(errorToast(page)).toContainText('Could not create the workspace')
+    await expect(page).toHaveURL(/\/login/)
+    const owner = { token: await loginUser(api, user.email, user.password) }
+    expect((await listWorkspaces(api, owner)).map(item => item.id)).toEqual([workspace.id])
   })
 })

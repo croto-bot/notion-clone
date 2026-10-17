@@ -40,21 +40,20 @@ class PageRepository(SQLAlchemyRepository[Page]):
         self,
         workspace_id: uuid.UUID,
         parent_id: uuid.UUID | None,
-        *,
-        include_trashed: bool = False,
     ) -> list[Page]:
-        """The pages directly under ``parent_id`` (None = workspace root)."""
+        """The live pages directly under ``parent_id`` (None = workspace root)."""
         parent_clause = (
             Page.parent_id == parent_id
             if parent_id is not None
             else Page.parent_id.is_(None)
         )
-        conditions = [Page.workspace_id == workspace_id, parent_clause]
-        if not include_trashed:
-            conditions.append(Page.deleted_at.is_(None))
         statement = (
             select(Page)
-            .where(*conditions)
+            .where(
+                Page.workspace_id == workspace_id,
+                parent_clause,
+                Page.deleted_at.is_(None),
+            )
             .order_by(asc(Page.position))
             .execution_options(populate_existing=True)
         )

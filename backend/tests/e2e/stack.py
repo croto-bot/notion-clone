@@ -106,7 +106,9 @@ def server_environment(db_url: str) -> dict[str, str]:
     return {
         **os.environ,
         "PYTHONUNBUFFERED": "1",
-        "DB_URL": db_url,
+        # The asyncpg form (as SQLAlchemy's async engine names it): the app
+        # and Alembic must both accept it, not only the plain postgresql://.
+        "DB_URL": db_url.replace("postgresql://", "postgresql+asyncpg://", 1),
         "DB_POOL_SIZE": str(SERVER_DB_POOL_SIZE),
         "DB_POOL_PRE_PING": "false",
         "APP_NAME": "backend-e2e",
@@ -122,6 +124,10 @@ def server_environment(db_url: str) -> dict[str, str]:
         "LOG_FORMAT": "json",
         "FRONTEND_URL": FRONTEND_URL,
         "SENTRY_DSN": "",
+        # Deployment context: every log line carries these (configure_logging).
+        "VERSION": "e2e-version",
+        "COMMIT_HASH": "e2e-commit",
+        "INSTANCE_ID": "e2e-instance",
         "GOOGLE_CLIENT_ID": "e2e-client-id",
         "GOOGLE_CLIENT_SECRET": "e2e-client-secret",
         "GOOGLE_TOKEN_URL": f"{UNREACHABLE_OAUTH_PROVIDER}/token",
@@ -129,7 +135,8 @@ def server_environment(db_url: str) -> dict[str, str]:
     }
 
 
-def _alembic(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+def run_alembic(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+    """Run the real Alembic CLI in backend/ with ``env``; never raises on failure."""
     return subprocess.run(
         [sys.executable, "-m", "alembic", *args],
         cwd=BACKEND_DIR,
@@ -142,19 +149,28 @@ def _alembic(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str
 
 
 def run_migrations(env: dict[str, str]) -> None:
-    """Apply the real migrations, then fail if the models need a new migration.
+    """Apply the real migrations, prove they reverse, then check them against the models.
 
-    ``alembic upgrade head`` builds the schema. ``alembic check`` then compares
-    it with the SQLAlchemy models: a model change without a migration fails
-    the whole suite here, with Alembic's list of the missing operations.
+    ``alembic upgrade head`` builds the schema. ``alembic downgrade base`` and a
+    second upgrade prove every migration can be rolled back and applied again.
+    ``alembic upgrade head --sql`` proves the offline (SQL script) mode still
+    renders. ``alembic check`` then compares the schema with the SQLAlchemy
+    models: a model change without a migration fails the whole suite here, with
+    Alembic's list of the missing operations.
     """
-    upgrade = _alembic(env, "upgrade", "head")
-    if upgrade.returncode != 0:
-        raise RuntimeError(
-            "`alembic upgrade head` failed against the e2e database:\n"
-            f"{upgrade.stdout}\n{upgrade.stderr}"
-        )
-    check = _alembic(env, "check")
+    for args in (
+        ("upgrade", "head"),
+        ("downgrade", "base"),
+        ("upgrade", "head"),
+        ("upgrade", "head", "--sql"),
+    ):
+        step = run_alembic(env, *args)
+        if step.returncode != 0:
+            raise RuntimeError(
+                f"`alembic {' '.join(args)}` failed against the e2e database:\n"
+                f"{step.stdout}\n{step.stderr}"
+            )
+    check = run_alembic(env, "check")
     if check.returncode != 0:
         raise RuntimeError(
             "The SQLAlchemy models and the migrations disagree (`alembic check`).\n"
@@ -234,7 +250,18 @@ class Database:
 
 
 # Keys left out of ServerLog.render(): shown elsewhere or the same on every line.
-_RENDER_SKIP = frozenset({"level", "message", "service", "environment", "timestamp"})
+_RENDER_SKIP = frozenset(
+    {
+        "level",
+        "message",
+        "service",
+        "environment",
+        "version",
+        "commit_hash",
+        "instance_id",
+        "timestamp",
+    }
+)
 
 
 def _parse_event(line: str) -> dict[str, Any] | None:

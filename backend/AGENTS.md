@@ -36,7 +36,6 @@ app/
 ├── repositories/     # BaseRepository, SQLAlchemyRepository, QueryOptions, on-conflict clauses, exceptions
 ├── services/         # BaseService (generic CRUD)
 ├── dependencies/     # get_engine (singleton), get_db_session, get_repository()
-├── integrations/     # ExternalApiService: async httpx wrapper for third-party APIs (unused by default)
 ├── user/             # User model, /users/me routes
 │   └── auth/         # Sessions, register/login/logout, password reset, email verification, Google OAuth
 ├── modules/          # Feature modules (see below)
@@ -121,7 +120,7 @@ Every error body is `{"detail": ..., "error_code": "..."}` (`app/exceptions.py` 
 
 - Services and repositories raise domain exceptions (subclass `HTTPExceptionMixin` with `status_code`, `detail`, `error_code`). Keep the cause: `raise X(...) from err`. Never `from None`.
 - Routers do not catch exceptions (exception: the redirect-based OAuth callback).
-- External I/O: catch protocol errors and wrap them in a domain exception with `from err` (example: `ExternalApiService` in `app/integrations/http_client.py`).
+- External I/O: catch protocol errors and wrap them in a domain exception with `from err` (example: the Google token exchange in `app/user/auth/service.py` raises `OAuthProviderError() from err`).
 
 ## Logging
 

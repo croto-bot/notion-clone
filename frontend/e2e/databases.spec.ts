@@ -11,8 +11,12 @@ import {
   sidebar,
   updateMe,
   updatePage,
+  type APIRequestContext,
+  type Page,
+  type TestUser,
 } from './fixtures'
 import type { DatabaseProperty } from '../src/types/database'
+import type { PageResponse } from '../src/types/page'
 
 function property(schema: DatabaseProperty[] | null, name: string): DatabaseProperty {
   const found = schema?.find(item => item.name === name)
@@ -695,5 +699,660 @@ test.describe('databases: the table on small screens (fix round 2)', () => {
     expect(buttonBox!.x + buttonBox!.width).toBeLessThanOrEqual(
       scrollerBox!.x + scrollerBox!.width + 0.5
     )
+  })
+})
+
+test.describe('databases: filter and sort rules keep the open view (coverage)', () => {
+  test('a filter added on a second view goes to that view and keeps its sort', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Two views',
+    })
+    await page.goto(`/p/${database.id}`)
+    await expect(page.getByTestId('database-view')).toBeVisible()
+
+    // A sort on the first view, then a filter on the same view.
+    await page.getByRole('button', { name: 'Sort', exact: true }).click()
+    await page.getByRole('button', { name: 'Add a sort' }).click()
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Filter', exact: true }).click()
+    await page.getByRole('button', { name: 'Add a filter' }).click()
+    await page.keyboard.press('Escape')
+    await expect
+      .poll(async () => {
+        const [view] = (await getPage(api, user, database.id)).database_views ?? []
+        return [view?.sorts.length, view?.filters.length]
+      })
+      .toEqual([1, 1])
+
+    // A second view: its own filter must not land on the first view.
+    await page.getByRole('button', { name: 'Add a view' }).click()
+    await page.getByRole('menuitem', { name: 'List' }).click()
+    await expect(page.getByTestId('database-list')).toBeVisible()
+    await page.getByRole('button', { name: 'Filter', exact: true }).click()
+    await page.getByRole('button', { name: 'Add a filter' }).click()
+    await page.keyboard.press('Escape')
+    await expect
+      .poll(async () =>
+        ((await getPage(api, user, database.id)).database_views ?? []).map(view => [
+          view.type,
+          view.sorts.length,
+          view.filters.length,
+        ])
+      )
+      .toEqual([
+        ['table', 1, 1],
+        ['list', 0, 1],
+      ])
+  })
+})
+
+/** The database used by the filter, sort and cell tests: one column of every kind. */
+async function seedTracker(api: APIRequestContext, user: TestUser) {
+  const me = await getMe(api, user)
+  const workspace = await ensureWorkspace(api, user)
+  const database = await createPage(api, user, {
+    workspace_id: workspace.id,
+    kind: 'database',
+    title: 'Tracker',
+  })
+  const status = property(database.database_schema, 'Status')
+  const optionId = (name: string) => status.options!.find(option => option.name === name)!.id
+  const tags: DatabaseProperty = {
+    id: 'tags-col',
+    name: 'Labels',
+    type: 'multi_select',
+    options: [
+      { id: 'alpha', name: 'Alpha', color: 'blue' },
+      { id: 'beta', name: 'Beta', color: 'green' },
+    ],
+  }
+  const extra: DatabaseProperty[] = [
+    tags,
+    { id: 'points-col', name: 'Points', type: 'number' },
+    { id: 'due-col', name: 'Due', type: 'date' },
+    { id: 'shipped-col', name: 'Shipped', type: 'checkbox' },
+    { id: 'notes-col', name: 'Notes', type: 'text' },
+    { id: 'link-col', name: 'Link', type: 'url' },
+    { id: 'owner-col', name: 'Owner', type: 'person' },
+    { id: 'created-col', name: 'Created', type: 'created_time' },
+    { id: 'edited-col', name: 'Edited', type: 'last_edited_time' },
+  ]
+  // Drop the default Tags column: one multi-select is enough here.
+  const schema = [
+    ...(database.database_schema ?? []).filter(item => item.name !== 'Tags'),
+    ...extra,
+  ]
+  await updatePage(api, user, database.id, { database_schema: schema })
+  const row = (title: string, properties: Record<string, unknown>) =>
+    createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title,
+      properties: properties as PageResponse['properties'],
+    })
+  // Created one after the other, so Created/Edited sort A, B, C.
+  const a = await row('Apple', {
+    [status.id]: optionId('Done'),
+    'tags-col': ['beta'],
+    'points-col': 1,
+    'due-col': { start: '2026-01-10' },
+    'shipped-col': true,
+    'notes-col': 'alpha one',
+    'link-col': 'https://a.example.com',
+  })
+  const b = await row('Banana', {
+    [status.id]: optionId('Not started'),
+    'tags-col': ['alpha'],
+    'points-col': 5,
+    'due-col': { start: '2026-02-20' },
+    'shipped-col': false,
+    'notes-col': 'beta two',
+    'owner-col': [me.id],
+  })
+  const c = await row('Cherry', {})
+  return { database, status, optionId, a, b, c }
+}
+
+/** The titles of the table rows, top to bottom. */
+function rowTitles(page: Page) {
+  return page
+    .locator('[data-row-id]')
+    .evaluateAll(rows => rows.map(row => row.getAttribute('aria-label')))
+}
+
+async function expectRows(page: Page, titles: string[], timeout?: number) {
+  await expect.poll(() => rowTitles(page), { timeout }).toEqual(titles)
+}
+
+/** Opens the database and waits for its rows: the first load compiles the views (slow under coverage). */
+async function openTracker(page: Page, databaseId: string) {
+  await page.goto(`/p/${databaseId}`)
+  await expectRows(page, ['Apple', 'Banana', 'Cherry'], 20_000)
+}
+
+async function rowValue(api: APIRequestContext, user: TestUser, rowId: string, key: string) {
+  return (await getPage(api, user, rowId)).properties?.[key] ?? null
+}
+
+test.describe('databases: filters, sorts and cells (coverage)', () => {
+  test('filters numbers, dates, times and checkboxes with every operator', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    test.setTimeout(90_000)
+    const { database } = await seedTracker(api, user)
+    await openTracker(page, database.id)
+
+    await page.getByRole('button', { name: 'Filter', exact: true }).click()
+    await page.getByRole('button', { name: 'Add a filter' }).click()
+    const property = page.getByLabel('Filter property')
+    const operator = page.getByLabel('Filter operator')
+    const value = page.getByLabel('Filter value')
+
+    // Number. A rule without a value hides nothing.
+    await property.selectOption({ label: 'Points' })
+    await expectRows(page, ['Apple', 'Banana', 'Cherry'])
+    await value.fill('5') // sent after a pause in typing
+    await expectRows(page, ['Banana'])
+    await operator.selectOption({ label: '≠' })
+    await expectRows(page, ['Apple', 'Cherry'])
+    await value.fill('1')
+    await value.press('Enter') // sent at once
+    await operator.selectOption({ label: '>' })
+    await expectRows(page, ['Banana'])
+    await operator.selectOption({ label: '≥' })
+    await expectRows(page, ['Apple', 'Banana'])
+    await operator.selectOption({ label: '<' })
+    await expect(page.getByText('No rows match the filter.')).toBeVisible()
+    await value.fill('5')
+    await value.blur() // sent when the field loses focus
+    await expectRows(page, ['Apple'])
+    await operator.selectOption({ label: '≤' })
+    await expectRows(page, ['Apple', 'Banana'])
+    await operator.selectOption({ label: 'Is empty' })
+    await expect(value).toBeHidden()
+    await expectRows(page, ['Cherry'])
+    await operator.selectOption({ label: 'Is not empty' })
+    await expectRows(page, ['Apple', 'Banana'])
+    await expect
+      .poll(async () => (await getPage(api, user, database.id)).database_views?.[0]?.filters)
+      .toEqual([{ property_id: 'points-col', op: 'is_not_empty', value: null }])
+
+    // Date.
+    await property.selectOption({ label: 'Due' })
+    await expectRows(page, ['Apple', 'Banana', 'Cherry'])
+    await value.fill('2026-01-10')
+    await expectRows(page, ['Apple'])
+    await operator.selectOption({ label: 'Is before' })
+    await value.fill('2026-02-20')
+    await expectRows(page, ['Apple'])
+    await operator.selectOption({ label: 'Is after' })
+    await value.fill('2026-01-10')
+    await expectRows(page, ['Banana'])
+    await operator.selectOption({ label: 'Is on or before' })
+    await expectRows(page, ['Apple'])
+    await operator.selectOption({ label: 'Is on or after' })
+    await expectRows(page, ['Apple', 'Banana'])
+    await operator.selectOption({ label: 'Is empty' })
+    await expectRows(page, ['Cherry'])
+
+    // Created time: every row was made after 2000 and none before.
+    await property.selectOption({ label: 'Created' })
+    await operator.selectOption({ label: 'Is on or after' })
+    await value.fill('2000-01-01')
+    await expectRows(page, ['Apple', 'Banana', 'Cherry'])
+    await operator.selectOption({ label: 'Is before' })
+    await expect(page.getByText('No rows match the filter.')).toBeVisible()
+
+    // Checkbox.
+    await property.selectOption({ label: 'Shipped' })
+    await expect(operator).toHaveValue('checked')
+    await expectRows(page, ['Apple'])
+    await operator.selectOption({ label: 'Is not checked' })
+    await expectRows(page, ['Banana', 'Cherry'])
+    await expect
+      .poll(async () => (await getPage(api, user, database.id)).database_views?.[0]?.filters)
+      .toEqual([{ property_id: 'shipped-col', op: 'unchecked', value: null }])
+  })
+
+  test('filters text, URLs, selects, multi-selects and people', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    test.setTimeout(90_000)
+    const { database, optionId } = await seedTracker(api, user)
+    await openTracker(page, database.id)
+
+    await page.getByRole('button', { name: 'Filter', exact: true }).click()
+    await page.getByRole('button', { name: 'Add a filter' }).click()
+    const property = page.getByLabel('Filter property')
+    const operator = page.getByLabel('Filter operator')
+    const value = page.getByLabel('Filter value')
+
+    await property.selectOption({ label: 'Notes' })
+    await value.fill('ONE')
+    await expectRows(page, ['Apple'])
+    await operator.selectOption({ label: 'Does not contain' })
+    await expectRows(page, ['Banana', 'Cherry'])
+    await operator.selectOption({ label: 'Is' })
+    await value.fill('beta two')
+    await expectRows(page, ['Banana'])
+    await operator.selectOption({ label: 'Is not' })
+    await expectRows(page, ['Apple', 'Cherry'])
+    await operator.selectOption({ label: 'Starts with' })
+    await value.fill('alpha')
+    await expectRows(page, ['Apple'])
+    await operator.selectOption({ label: 'Ends with' })
+    await value.fill('two')
+    await expectRows(page, ['Banana'])
+    await operator.selectOption({ label: 'Is empty' })
+    await expectRows(page, ['Cherry'])
+    await operator.selectOption({ label: 'Is not empty' })
+    await expectRows(page, ['Apple', 'Banana'])
+
+    await property.selectOption({ label: 'Link' })
+    await value.fill('a.example')
+    await expectRows(page, ['Apple'])
+
+    await property.selectOption({ label: 'Status' })
+    await value.selectOption({ label: 'Done' })
+    await expectRows(page, ['Apple'])
+    await operator.selectOption({ label: 'Is not' })
+    await expectRows(page, ['Banana', 'Cherry'])
+
+    await property.selectOption({ label: 'Labels' })
+    await expect(operator).toHaveValue('contains')
+    await value.selectOption({ label: 'Alpha' })
+    await expectRows(page, ['Banana'])
+    await operator.selectOption({ label: 'Does not contain' })
+    await expectRows(page, ['Apple', 'Cherry'])
+
+    await property.selectOption({ label: 'Owner' })
+    await value.selectOption({ index: 1 })
+    await expectRows(page, ['Banana'])
+    await operator.selectOption({ label: 'Is empty' })
+    await expectRows(page, ['Apple', 'Cherry'])
+
+    // A second rule narrows the rows further: both must pass.
+    await page.getByRole('button', { name: 'Add a filter' }).click()
+    const second = page.getByTestId('filter-rule').nth(1)
+    await second.getByLabel('Filter property').selectOption({ label: 'Status' })
+    await second.getByLabel('Filter value').selectOption({ label: 'Done' })
+    await expectRows(page, ['Apple'])
+    await second.getByRole('button', { name: 'Remove filter' }).click()
+    await expectRows(page, ['Apple', 'Cherry'])
+    await expect
+      .poll(async () => (await getPage(api, user, database.id)).database_views?.[0]?.filters)
+      .toEqual([{ property_id: 'owner-col', op: 'is_empty', value: null }])
+    expect(optionId('Done')).toBeTruthy()
+  })
+
+  test('sorts by every kind of property', async ({ authedPage: page, api, user }) => {
+    test.setTimeout(90_000)
+    const { database, a } = await seedTracker(api, user)
+    await openTracker(page, database.id)
+
+    await page.getByRole('button', { name: 'Sort', exact: true }).click()
+    await page.getByRole('button', { name: 'Add a sort' }).click()
+    const property = page.getByLabel('Sort property')
+    const direction = page.getByLabel('Sort direction')
+
+    // Empty values go last in both directions.
+    const cases: [string, string[], string[]][] = [
+      ['Points', ['Apple', 'Banana', 'Cherry'], ['Banana', 'Apple', 'Cherry']],
+      ['Shipped', ['Apple', 'Banana', 'Cherry'], ['Apple', 'Banana', 'Cherry']],
+      ['Status', ['Banana', 'Apple', 'Cherry'], ['Apple', 'Banana', 'Cherry']],
+      ['Labels', ['Banana', 'Apple', 'Cherry'], ['Apple', 'Banana', 'Cherry']],
+      ['Due', ['Apple', 'Banana', 'Cherry'], ['Banana', 'Apple', 'Cherry']],
+      ['Notes', ['Apple', 'Banana', 'Cherry'], ['Banana', 'Apple', 'Cherry']],
+      ['Owner', ['Banana', 'Apple', 'Cherry'], ['Banana', 'Apple', 'Cherry']],
+      ['Created', ['Apple', 'Banana', 'Cherry'], ['Cherry', 'Banana', 'Apple']],
+      ['Edited', ['Apple', 'Banana', 'Cherry'], ['Cherry', 'Banana', 'Apple']],
+    ]
+    for (const [name, ascending, descending] of cases) {
+      await property.selectOption({ label: name })
+      await direction.selectOption('asc')
+      await expectRows(page, ascending)
+      await direction.selectOption('desc')
+      await expectRows(page, descending)
+    }
+    await expect
+      .poll(async () => (await getPage(api, user, database.id)).database_views?.[0]?.sorts)
+      .toEqual([{ property_id: 'edited-col', direction: 'desc' }])
+
+    // A tie on the first rule falls to the second one.
+    await property.selectOption({ label: 'Shipped' })
+    await page.getByRole('button', { name: 'Add a sort' }).click()
+    await page.getByTestId('sort-rule').nth(1).getByLabel('Sort property').selectOption({
+      label: 'Points',
+    })
+    await expectRows(page, ['Apple', 'Banana', 'Cherry'])
+    await page.getByTestId('sort-rule').nth(1).getByLabel('Sort direction').selectOption('desc')
+    await expectRows(page, ['Apple', 'Banana', 'Cherry'])
+    await page.getByTestId('sort-rule').first().getByRole('button', { name: 'Remove sort' }).click()
+    await expectRows(page, ['Banana', 'Apple', 'Cherry'])
+    await page.getByRole('button', { name: 'Delete sort' }).click()
+    await expectRows(page, ['Apple', 'Banana', 'Cherry'])
+    await page.keyboard.press('Escape')
+
+    // The column menu sorts too, and hides the column in this view.
+    await page.getByRole('columnheader').filter({ hasText: 'Points' }).locator('button').click()
+    await page.getByRole('button', { name: 'Sort descending' }).click()
+    await expectRows(page, ['Banana', 'Apple', 'Cherry'])
+    await page.getByRole('columnheader').filter({ hasText: 'Points' }).locator('button').click()
+    await page.getByRole('button', { name: 'Sort ascending' }).click()
+    await expectRows(page, ['Apple', 'Banana', 'Cherry'])
+    await page.getByRole('columnheader').filter({ hasText: 'Points' }).locator('button').click()
+    await page.getByRole('button', { name: 'Hide in view' }).click()
+    await expect(page.getByRole('columnheader').filter({ hasText: 'Points' })).toHaveCount(0)
+    await expect
+      .poll(async () => (await getPage(api, user, database.id)).database_views?.[0])
+      .toMatchObject({
+        sorts: [{ property_id: 'points-col', direction: 'asc' }],
+        hidden_properties: ['points-col'],
+      })
+    expect(a.id).toBeTruthy()
+  })
+
+  test('edits number, text, date and title cells', async ({ authedPage: page, api, user }) => {
+    test.setTimeout(90_000)
+    const { database, a, c } = await seedTracker(api, user)
+    await page.goto(`/p/${database.id}`)
+    const apple = page.getByRole('row', { name: 'Apple' })
+    const cherry = page.getByRole('row', { name: 'Cherry' })
+    await expect(apple).toBeVisible({ timeout: 20_000 })
+
+    // Number: Enter saves, an empty field clears, text and Escape keep the value.
+    await apple.getByRole('button', { name: 'Points: 1' }).click()
+    await apple.getByLabel('Points', { exact: true }).fill('7')
+    await apple.getByLabel('Points', { exact: true }).press('Enter')
+    await expect.poll(() => rowValue(api, user, a.id, 'points-col')).toBe(7)
+    await apple.getByRole('button', { name: 'Points: 7' }).click()
+    await apple.getByLabel('Points', { exact: true }).fill('  ')
+    await apple.getByLabel('Points', { exact: true }).press('Enter')
+    await expect.poll(() => rowValue(api, user, a.id, 'points-col')).toBeNull()
+    await apple.getByRole('button', { name: 'Points: empty' }).click()
+    await apple.getByLabel('Points', { exact: true }).fill('lots')
+    await apple.getByLabel('Points', { exact: true }).press('Enter')
+    await expect(apple.getByRole('button', { name: 'Points: empty' })).toBeVisible()
+    await apple.getByRole('button', { name: 'Points: empty' }).click()
+    await apple.getByLabel('Points', { exact: true }).fill('9')
+    await apple.getByLabel('Points', { exact: true }).press('Escape')
+    await expect(apple.getByRole('button', { name: 'Points: empty' })).toBeVisible()
+    await apple.getByRole('button', { name: 'Points: empty' }).click()
+    await apple.getByLabel('Points', { exact: true }).fill('3.5')
+    await apple.getByLabel('Points', { exact: true }).blur()
+    await expect(apple.getByRole('button', { name: 'Points: 3.5' })).toBeVisible()
+    await expect.poll(() => rowValue(api, user, a.id, 'points-col')).toBe(3.5)
+    expect(await rowValue(api, user, a.id, 'points-col')).toBe(3.5)
+
+    // Text.
+    await cherry.getByRole('button', { name: 'Notes: empty' }).click()
+    await cherry.getByLabel('Notes', { exact: true }).fill('gamma three')
+    await cherry.getByLabel('Notes', { exact: true }).press('Enter')
+    await expect(cherry.getByRole('button', { name: 'Notes: gamma three' })).toBeVisible()
+    await expect.poll(() => rowValue(api, user, c.id, 'notes-col')).toBe('gamma three')
+
+    // Date: set a day, add an end date, move it, drop it, then clear the value.
+    await cherry.getByRole('button', { name: 'Due of Cherry' }).click()
+    const end = page.getByRole('checkbox', { name: 'End date' })
+    await expect(end).toBeDisabled()
+    await page.getByLabel('Date', { exact: true }).fill('2026-03-01')
+    await expect.poll(() => rowValue(api, user, c.id, 'due-col')).toEqual({ start: '2026-03-01' })
+    // A controlled box: it shows the saved value, so click and wait for it.
+    await end.click()
+    await expect(end).toBeChecked()
+    await expect
+      .poll(() => rowValue(api, user, c.id, 'due-col'))
+      .toEqual({ start: '2026-03-01', end: '2026-03-01' })
+    await page.getByRole('textbox', { name: 'End date' }).fill('2026-03-05')
+    await expect
+      .poll(() => rowValue(api, user, c.id, 'due-col'))
+      .toEqual({ start: '2026-03-01', end: '2026-03-05' })
+    await page.getByLabel('Date', { exact: true }).fill('2026-03-02')
+    await expect
+      .poll(() => rowValue(api, user, c.id, 'due-col'))
+      .toEqual({ start: '2026-03-02', end: '2026-03-05' })
+    await end.click()
+    await expect(end).not.toBeChecked()
+    await expect.poll(() => rowValue(api, user, c.id, 'due-col')).toEqual({ start: '2026-03-02' })
+    await page.getByLabel('Date', { exact: true }).fill('')
+    await expect.poll(() => rowValue(api, user, c.id, 'due-col')).toBeNull()
+    await page.getByLabel('Date', { exact: true }).fill('2026-04-01')
+    await expect(cherry.getByText('Apr 1, 2026')).toBeVisible()
+    await page.getByRole('button', { name: 'Clear' }).click()
+    await expect(page.getByLabel('Date', { exact: true })).toBeHidden()
+    await expect.poll(() => rowValue(api, user, c.id, 'due-col')).toBeNull()
+
+    // A new type for a column clears the values the old type stored.
+    await page.getByRole('columnheader').filter({ hasText: 'Labels' }).locator('button').click()
+    await page
+      .getByRole('list', { name: 'Property type' })
+      .getByRole('button', { name: 'Text', exact: true })
+      .click()
+    await expect.poll(() => rowValue(api, user, a.id, 'tags-col')).toBeNull()
+    await expect(apple.getByRole('button', { name: 'Labels: empty' })).toBeVisible()
+
+    // Title: Escape drops the draft.
+    await cherry.getByRole('button', { name: 'Title: Cherry' }).click()
+    await page.getByLabel('Row title').fill('Not kept')
+    await page.getByLabel('Row title').press('Escape')
+    await expect(cherry.getByRole('button', { name: 'Title: Cherry' })).toBeVisible()
+    expect((await getPage(api, user, c.id)).title).toBe('Cherry')
+  })
+
+  test('renames an option and picks the first one with Enter', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const { database, status, optionId, c } = await seedTracker(api, user)
+    await page.goto(`/p/${database.id}`)
+    const cherry = page.getByRole('row', { name: 'Cherry' })
+    await expect(cherry).toBeVisible({ timeout: 20_000 })
+
+    // Enter on an empty search picks the first option.
+    await cherry.getByRole('button', { name: 'Status of Cherry' }).click()
+    await page.getByLabel('Search or create an option').press('Enter')
+    await expect.poll(() => rowValue(api, user, c.id, status.id)).toBe(optionId('Not started'))
+
+    await cherry.getByRole('button', { name: 'Status of Cherry' }).click()
+    await page.getByRole('button', { name: 'Edit option Done' }).click()
+    const name = page.getByLabel('Option name')
+    await name.fill('Finished')
+    await name.press('Enter')
+    await expect
+      .poll(async () =>
+        (await getPage(api, user, database.id)).database_schema
+          ?.find(item => item.id === status.id)
+          ?.options?.map(option => option.name)
+      )
+      .toEqual(['Not started', 'In progress', 'Finished'])
+    await expect(page.getByRole('row', { name: 'Apple' }).getByText('Finished')).toBeVisible()
+  })
+
+  test('switches a view to a board grouped by the first select', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const { database, status } = await seedTracker(api, user)
+    await page.goto(`/p/${database.id}`)
+    await expect(page.getByTestId('database-table')).toBeVisible()
+
+    await page.getByRole('button', { name: 'View options for Table' }).click()
+    await page.getByRole('button', { name: 'Board', exact: true }).click()
+    await expect(page.getByTestId('database-board')).toBeVisible()
+    await expect(page.getByTestId('board-column').filter({ hasText: 'Done' })).toContainText(
+      'Apple'
+    )
+    await expect(page.getByLabel('Group by')).toHaveValue(status.id)
+    await expect
+      .poll(async () => (await getPage(api, user, database.id)).database_views?.[0])
+      .toMatchObject({ type: 'board', group_by: status.id })
+
+    await page.getByRole('button', { name: 'List', exact: true }).click()
+    await expect(page.getByTestId('database-list')).toBeVisible()
+  })
+
+  test('shows untitled rows and covers in the gallery and the list', async ({
+    authedPage: page,
+    page: anonymous,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Cards',
+    })
+    const status = property(database.database_schema, 'Status')
+    const done = status.options!.find(option => option.name === 'Done')!
+    const tags = property(database.database_schema, 'Tags')
+    const site: DatabaseProperty = { id: 'site-col', name: 'Site', type: 'url' }
+    const points: DatabaseProperty = { id: 'points-col', name: 'Points', type: 'number' }
+    // Cards show their first three visible properties: Status, Site and Points.
+    const hidden = [tags.id]
+    await updatePage(api, user, database.id, {
+      database_schema: [...(database.database_schema ?? []), site, points],
+      database_views: [
+        {
+          id: 'g',
+          name: 'Cards',
+          type: 'gallery',
+          sorts: [],
+          filters: [],
+          hidden_properties: hidden,
+        },
+        { id: 'l', name: 'Lines', type: 'list', sorts: [], filters: [], hidden_properties: hidden },
+      ],
+    })
+    const covered = await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: 'With cover',
+      icon: '🌊',
+      properties: { [status.id]: done.id, [site.id]: 'https://wave.example.com', [points.id]: 8 },
+    })
+    await updatePage(api, user, covered.id, { cover: 'gradient-2' })
+    const untitled = await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: '',
+    })
+
+    await page.goto(`/p/${database.id}`)
+    const gallery = page.getByTestId('database-gallery')
+    await expect(gallery.getByRole('button', { name: 'Open With cover' })).toContainText('Done')
+    await expect(gallery.getByRole('button', { name: 'Open With cover' })).toContainText('8')
+    await expect(gallery.getByRole('button', { name: 'Open With cover' })).toContainText(
+      'https://wave.example.com'
+    )
+    await gallery.getByRole('button', { name: 'Open Untitled' }).click()
+    await expect(page).toHaveURL(`/p/${untitled.id}`)
+    await page.goBack()
+
+    await page.getByRole('tab', { name: 'Lines' }).click()
+    const list = page.getByTestId('database-list')
+    await expect(list.getByRole('button', { name: 'With cover' })).toBeVisible()
+    await list.getByRole('button', { name: 'Untitled' }).click()
+    await expect(page).toHaveURL(`/p/${untitled.id}`)
+
+    // The public page shows the same cards, without links into the app.
+    const shared = await updatePage(api, user, database.id, { is_public: true })
+    await anonymous.goto(`/share/${shared.public_id}`)
+    const publicGallery = anonymous.getByTestId('database-gallery')
+    await expect(publicGallery.getByText('With cover')).toBeVisible()
+    await expect(publicGallery.getByText('Untitled')).toBeVisible()
+    await expect(publicGallery.getByRole('button')).toHaveCount(0)
+    await anonymous.getByRole('tab', { name: 'Lines' }).click()
+    await expect(anonymous.getByTestId('database-list').getByText('Untitled')).toBeVisible()
+    await expect(anonymous.getByTestId('database-list').getByRole('button')).toHaveCount(0)
+    expect((await getPublicPage(api, shared.public_id!)).rows).toHaveLength(2)
+  })
+})
+
+test.describe('databases: board columns (coverage)', () => {
+  test('moves cards to "No Status" and back, shows the board read-only on the web', async ({
+    authedPage: page,
+    page: anonymous,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Kanban',
+    })
+    const status = property(database.database_schema, 'Status')
+    const done = status.options!.find(option => option.name === 'Done')!
+    await updatePage(api, user, database.id, {
+      database_views: [
+        { id: 'b', name: 'Board', type: 'board', sorts: [], filters: [], hidden_properties: [] },
+      ],
+    })
+    const card = await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: 'Card',
+      properties: { [status.id]: done.id },
+    })
+    const untitled = await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: '',
+    })
+    const statusOf = async (id: string) =>
+      (await listRows(api, user, database.id)).find(row => row.id === id)?.properties[status.id] ??
+      null
+
+    // Wide enough for all four columns, so every drop target is on screen.
+    await page.setViewportSize({ width: 1600, height: 900 })
+    await page.goto(`/p/${database.id}`)
+    const column = (name: string) => page.getByTestId('board-column').filter({ hasText: name })
+    await expect(column('No Status')).toContainText('Untitled')
+
+    await mouseDrag(page, page.getByRole('button', { name: 'Drag Card' }), column('No Status'))
+    await expect.poll(() => statusOf(card.id)).toBeNull()
+    await mouseDrag(
+      page,
+      page.getByRole('button', { name: 'Drag Untitled' }).first(),
+      column('Done')
+    )
+    await expect.poll(() => statusOf(untitled.id)).toBe(done.id)
+    // A drop on its own column changes nothing.
+    await mouseDrag(page, page.getByRole('button', { name: 'Drag Card' }), column('No Status'))
+    await expect(column('No Status')).toContainText('Card')
+    expect(await statusOf(card.id)).toBeNull()
+
+    // On the web the board is read-only: no drag handles, no "+ New".
+    const shared = await updatePage(api, user, database.id, { is_public: true })
+    await anonymous.goto(`/share/${shared.public_id}`)
+    const publicBoard = anonymous.getByTestId('database-board')
+    await expect(publicBoard.getByTestId('board-card')).toHaveCount(2)
+    await expect(publicBoard.getByRole('button')).toHaveCount(0)
+
+    // Without a select property every card sits in one "No Status" column.
+    await updatePage(api, user, database.id, {
+      database_schema: (database.database_schema ?? []).filter(item => item.type !== 'select'),
+    })
+    await page.reload()
+    await expect(page.getByTestId('board-column')).toHaveCount(1)
+    await expect(column('No Status')).toContainText('Card')
+    await expect(column('No Status')).toContainText('Untitled')
+    await page.getByRole('button', { name: 'View options for Board' }).click()
+    await expect(page.getByLabel('Group by')).toBeDisabled()
+    await expect(page.getByLabel('Group by')).toContainText('No select property')
   })
 })

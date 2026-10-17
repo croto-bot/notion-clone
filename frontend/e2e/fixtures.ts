@@ -25,6 +25,7 @@
  *   authedPage  A page in its own browser context, already signed in as `user`.
  *   loginAs     (user) => a new signed-in page for any other user.
  */
+import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import {
   test as base,
@@ -57,10 +58,11 @@ import type {
   UpdateWorkspaceData,
   Workspace,
 } from '../src/types/workspace'
-import { BACKEND_URL, FRONTEND_URL } from './support/stack'
+import { COVERAGE_ENABLED, addCoverage } from './support/coverage'
+import { BACKEND_URL, DB_CONTAINER, FRONTEND_URL } from './support/stack'
 
 export { expect }
-export type { Locator, Page, Request } from '@playwright/test'
+export type { APIRequestContext, Locator, Page, Request } from '@playwright/test'
 export { BACKEND_URL, FRONTEND_URL }
 
 export interface TestUser {
@@ -120,6 +122,16 @@ export async function loginUser(
   const response = await api.post('/auth/login', { data: { email, password } })
   await expectOk(response, `POST /auth/login (${email})`)
   return ((await response.json()) as AuthSessionResponse).id
+}
+
+/**
+ * Ends the session on the backend (`POST /auth/logout`), like a sign-out on
+ * another device. A page that still holds the token gets a real 401 on its
+ * next request.
+ */
+export async function revokeSession(api: APIRequestContext, user: Token): Promise<void> {
+  const response = await api.post('/auth/logout', { headers: authHeaders(user) })
+  await expectOk(response, 'POST /auth/logout')
 }
 
 /** `GET /users/me` */
@@ -258,6 +270,25 @@ export async function getPage(
   const response = await api.get(`/pages/${pageId}`, { headers: authHeaders(user) })
   await expectOk(response, `GET /pages/${pageId}`)
   return (await response.json()) as PageResponse
+}
+
+/**
+ * Moves a page's last edit back in time, straight in the e2e Postgres. No
+ * endpoint can write an old timestamp, and fake clocks are banned: this is how
+ * a test shows a page that someone last edited hours or years ago.
+ */
+export function backdatePage(pageId: string, editedAt: Date): void {
+  execFileSync('docker', [
+    'exec',
+    DB_CONTAINER,
+    'psql',
+    '--username=app',
+    '--dbname=app',
+    '--no-psqlrc',
+    '--quiet',
+    '--set=ON_ERROR_STOP=1',
+    `--command=UPDATE pages SET last_edited_at = '${editedAt.toISOString()}' WHERE id = '${pageId}'`,
+  ])
 }
 
 export async function updatePage(
@@ -475,6 +506,23 @@ export function workspaceEventsPath(workspaceId: string): string {
   return `/workspaces/${workspaceId}/events`
 }
 
+/**
+ * Resolves once the page's workspace events socket is open and the reload it
+ * starts on open has finished. Call it before `page.goto`, and await it before
+ * a `revokeSession`: a reload that lands after the revoke gets a 401 and signs
+ * the page out before the action under test.
+ */
+export async function liveEventsSettled(page: Page, workspaceId: string): Promise<void> {
+  await page.waitForEvent('websocket', {
+    predicate: socket => new URL(socket.url()).pathname === workspaceEventsPath(workspaceId),
+  })
+  await page.waitForResponse(
+    response =>
+      response.request().method() === 'GET' && new URL(response.url()).pathname === '/workspaces'
+  )
+  await page.waitForLoadState('networkidle')
+}
+
 /** `GET /public/pages/{public_id}` (no session). */
 export async function getPublicPage(api: APIRequestContext, publicId: string): Promise<PublicPage> {
   const response = await api.get(`/public/pages/${publicId}`)
@@ -622,6 +670,24 @@ function watchContext(context: BrowserContext): () => void {
   }
 }
 
+/**
+ * With E2E_COVERAGE=1, records the browser JS coverage of every page the
+ * context opens. Call the returned function before the context closes.
+ */
+function measureContext(context: BrowserContext): () => Promise<void> {
+  if (!COVERAGE_ENABLED) return async () => {}
+  const started: Promise<void>[] = []
+  context.on('page', page => {
+    started.push(page.coverage.startJSCoverage({ resetOnNavigation: false }))
+  })
+  return async () => {
+    await Promise.all(started)
+    for (const page of context.pages()) {
+      await addCoverage(await page.coverage.stopJSCoverage())
+    }
+  }
+}
+
 interface Fixtures {
   api: APIRequestContext
   user: TestUser
@@ -632,7 +698,9 @@ interface Fixtures {
 export const test = base.extend<Fixtures>({
   context: async ({ context }, use) => {
     const assertNoPageErrors = watchContext(context)
+    const saveCoverage = measureContext(context)
     await use(context)
+    await saveCoverage()
     assertNoPageErrors()
   },
 
@@ -647,7 +715,11 @@ export const test = base.extend<Fixtures>({
   },
 
   loginAs: async ({ browser }, use) => {
-    const opened: { context: BrowserContext; assertNoPageErrors: () => void }[] = []
+    const opened: {
+      context: BrowserContext
+      assertNoPageErrors: () => void
+      saveCoverage: () => Promise<void>
+    }[] = []
     await use(async user => {
       // The same thing a real sign-in leaves behind: the session token in localStorage.
       const context = await browser.newContext({
@@ -658,9 +730,14 @@ export const test = base.extend<Fixtures>({
           ],
         },
       })
-      opened.push({ context, assertNoPageErrors: watchContext(context) })
+      opened.push({
+        context,
+        assertNoPageErrors: watchContext(context),
+        saveCoverage: measureContext(context),
+      })
       return context.newPage()
     })
+    for (const { saveCoverage } of opened) await saveCoverage()
     for (const { context } of opened) await context.close()
     for (const { assertNoPageErrors } of opened) assertNoPageErrors()
   },

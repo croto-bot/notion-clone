@@ -124,6 +124,7 @@ filterwarnings = [
 
 [tool.coverage.run]
 source = ["."]
+branch = true
 # The e2e suite runs the app in a child process (uvicorn); measure it too.
 # uvicorn re-raises SIGTERM after shutdown, so save the data on SIGTERM.
 patch = ["subprocess"]
@@ -142,8 +143,15 @@ omit = [
     ".venv/*",
     "tests/*",
 ]
-exclude_lines = [
-    "if __name__ == .__main__.:"
+# Lines that never run by design: type-checker-only imports, overload and
+# Protocol stubs, and abstract method bodies.
+exclude_also = [
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@overload",
+    "@abc.abstractmethod",
+    "^\\s*\\.\\.\\.$",
+    "def .*: \\.\\.\\.$",
 ]
 
 [tool.ty.environment]

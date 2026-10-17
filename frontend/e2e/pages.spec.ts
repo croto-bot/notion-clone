@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import {
+  backdatePage,
   test,
   expect,
   addMember,
@@ -12,9 +13,11 @@ import {
   getPage,
   getDocument,
   listComments,
+  liveEventsSettled,
   listFavorites,
   listMembers,
   listTrash,
+  loginUser,
   mouseDrag,
   movePage,
   pageCollabPath,
@@ -22,6 +25,8 @@ import {
   PASSWORD,
   purgePage,
   registerUser,
+  revokeSession,
+  type Page,
   type Request,
   searchPages,
   sidebar,
@@ -1162,6 +1167,41 @@ test.describe('home (fix round 1)', () => {
   })
 })
 
+test.describe('home: when each recent page was last edited', () => {
+  test('says minutes, hours, yesterday, then the date', async ({ authedPage: page, api, user }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const now = Date.now()
+    const ages = [
+      { title: 'Minutes old', ago: 5 * 60_000 },
+      { title: 'Hours old', ago: 3 * 3_600_000 },
+      { title: 'A day old', ago: 30 * 3_600_000 },
+      { title: 'Days old', ago: 3 * 86_400_000 },
+      { title: 'Years old', ago: 400 * 86_400_000 },
+    ]
+    for (const age of ages) {
+      const note = await createPage(api, user, { workspace_id: workspace.id, title: age.title })
+      await getPage(api, user, note.id)
+      backdatePage(note.id, new Date(now - age.ago))
+    }
+
+    await page.goto('/home')
+    const recent = page.getByRole('region', { name: 'Recently visited' })
+    const card = (title: string) => recent.getByRole('link').filter({ hasText: title })
+    await expect(card('Minutes old')).toContainText('5m ago')
+    await expect(card('Hours old')).toContainText('3h ago')
+    await expect(card('A day old')).toContainText('yesterday')
+    // The date carries the year only when it is not this year.
+    const year = (ago: number) => new Date(now - ago).getFullYear()
+    const thisYear = year(0)
+    const shortDate = (ago: number) =>
+      year(ago) === thisYear
+        ? /old[A-Z][a-z]{2} \d{1,2}$/
+        : new RegExp(`old[A-Z][a-z]{2} \\d{1,2}, ${year(ago)}$`)
+    await expect(card('Days old')).toContainText(shortDate(3 * 86_400_000))
+    await expect(card('Years old')).toContainText(shortDate(400 * 86_400_000))
+  })
+})
+
 test.describe('home (fix round 2)', () => {
   for (const colorScheme of ['light', 'dark'] as const) {
     test(`the empty-state hint is readable (4.5:1) in the ${colorScheme} theme`, async ({
@@ -1206,4 +1246,432 @@ test.describe('home (fix round 2)', () => {
       expect(ratio).toBeGreaterThanOrEqual(4.5)
     })
   }
+})
+
+test.describe('pages: sidebar tree, cover, trash and refused actions (coverage)', () => {
+  test('expands, collapses, renames with Escape and adds a page inside from a row', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const parent = await createPage(api, user, { workspace_id: workspace.id, title: 'Parent' })
+    await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: parent.id,
+      title: 'Child',
+    })
+    await page.goto('/home')
+    const parentRow = sidebarPage(page, 'Parent')
+    await expect(parentRow).toHaveAttribute('aria-expanded', 'false')
+    await expect(sidebarPage(page, 'Child')).toBeHidden()
+
+    await parentRow.getByRole('button', { name: 'Expand Parent' }).click()
+    await expect(sidebarPage(page, 'Child')).toBeVisible()
+    await expect(parentRow).toHaveAttribute('aria-expanded', 'true')
+    await parentRow.getByRole('button', { name: 'Collapse Parent' }).click()
+    await expect(sidebarPage(page, 'Child')).toBeHidden()
+
+    // Escape leaves the rename without saving.
+    await parentRow.hover()
+    await parentRow.getByRole('button', { name: 'Options for Parent' }).click()
+    await page.getByRole('menuitem', { name: 'Rename' }).click()
+    const rename = sidebar(page).getByLabel('Page title')
+    await rename.fill('Not saved')
+    await rename.press('Escape')
+    await expect(rename).toBeHidden()
+    await expect(sidebarPage(page, 'Parent')).toBeVisible()
+    expect((await getPage(api, user, parent.id)).title).toBe('Parent')
+
+    // "+" on the row adds a page inside it and opens the parent.
+    await parentRow.hover()
+    await parentRow.getByRole('button', { name: 'Add a page inside Parent' }).click()
+    await expect(page).toHaveURL(/\/p\//)
+    await expect(sidebarPage(page, 'Child')).toBeVisible()
+    await expect
+      .poll(async () =>
+        (await pageTree(api, user, workspace.id)).filter(item => item.parent_id === parent.id)
+      )
+      .toHaveLength(2)
+
+    // A broken saved state starts with every parent closed.
+    await page.goto('/home')
+    await expect(sidebarPage(page, 'Child')).toBeVisible()
+    await page.evaluate(id => localStorage.setItem(`nx-expanded:${id}`, '{broken'), workspace.id)
+    await page.reload()
+    await expect(sidebarPage(page, 'Parent')).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  test('drops pages after a row, under an open parent and at the end; Escape cancels', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const titles = async () =>
+      (await pageTree(api, user, workspace.id))
+        .filter(item => item.parent_id === null)
+        .map(item => item.title)
+    const alpha = await createPage(api, user, { workspace_id: workspace.id, title: 'Alpha' })
+    await createPage(api, user, { workspace_id: workspace.id, title: 'Beta' })
+    await createPage(api, user, { workspace_id: workspace.id, title: 'Gamma' })
+    await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: alpha.id,
+      title: 'Inner',
+    })
+    await page.goto('/home')
+    await expect(sidebarPage(page, 'Gamma')).toBeVisible()
+
+    // The lower edge of Alpha (closed): Gamma comes right after it.
+    await mouseDrag(page, sidebarPage(page, 'Gamma'), sidebarPage(page, 'Alpha'), {
+      x: 100,
+      y: 24,
+    })
+    await expect.poll(titles).toEqual(['Alpha', 'Gamma', 'Beta'])
+
+    // The empty strip under the last row: Alpha goes to the end.
+    const tail = sidebar(page).getByRole('tree', { name: 'Page tree' }).getByTestId('tree-tail')
+    await mouseDrag(page, sidebarPage(page, 'Alpha'), tail)
+    await expect.poll(titles).toEqual(['Gamma', 'Beta', 'Alpha'])
+
+    // The lower edge of an open parent: the page becomes its first child.
+    await sidebarPage(page, 'Alpha').getByRole('button', { name: 'Expand Alpha' }).click()
+    await expect(sidebarPage(page, 'Inner')).toBeVisible()
+    await mouseDrag(page, sidebarPage(page, 'Gamma'), sidebarPage(page, 'Alpha'), {
+      x: 100,
+      y: 24,
+    })
+    await expect
+      .poll(async () =>
+        (await pageTree(api, user, workspace.id))
+          .filter(item => item.parent_id === alpha.id)
+          .map(item => item.title)
+      )
+      .toEqual(['Gamma', 'Inner'])
+
+    // Escape in the middle of a drag drops nothing.
+    const beta = (await sidebarPage(page, 'Beta').boundingBox())!
+    const target = (await sidebarPage(page, 'Alpha').boundingBox())!
+    await page.mouse.move(beta.x + 100, beta.y + beta.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(target.x + 100, target.y + 4, { steps: 15 })
+    await page.keyboard.press('Escape')
+    await page.mouse.up()
+    await expect(sidebarPage(page, 'Beta')).toHaveCSS('opacity', '1')
+    expect(await titles()).toEqual(['Beta', 'Alpha'])
+  })
+
+  test('repositions an image cover by dragging it', async ({ authedPage: page, api, user }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Banner' })
+    await updatePage(api, user, note.id, { cover: 'https://cdn.example.com/bg.png' })
+    await page.goto(`/p/${note.id}`)
+    const cover = page.getByTestId('page-cover')
+    await expect(cover).toBeVisible()
+
+    // Cancel keeps the saved position.
+    await cover.hover()
+    await page.getByRole('button', { name: 'Reposition' }).click()
+    await expect(page.getByText('Drag image to reposition')).toBeVisible()
+    await page.getByRole('button', { name: 'Cancel' }).click()
+    await expect(page.getByText('Drag image to reposition')).toBeHidden()
+
+    await cover.hover()
+    await page.getByRole('button', { name: 'Reposition' }).click()
+    const box = (await cover.boundingBox())!
+    // Dragging down by half the band shows more of the top: 50% -> 0%.
+    await page.mouse.move(box.x + box.width / 3, box.y + 20)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 3, box.y + 20 + box.height / 4, { steps: 5 })
+    await page.mouse.move(box.x + box.width / 3, box.y + 20 + box.height, { steps: 5 })
+    await page.mouse.up()
+    await expect
+      .poll(() => cover.evaluate(el => getComputedStyle(el).backgroundPosition))
+      .toBe('50% 0%')
+    await page.getByRole('button', { name: 'Save position' }).click()
+    await expect.poll(async () => (await getPage(api, user, note.id)).cover_position).toBe(0)
+  })
+
+  test('opens a page from the trash and shows "not found" for a missing page', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Binned' })
+    await trashPage(api, user, note.id)
+    await page.goto('/home')
+    await sidebar(page).getByRole('button', { name: 'Trash' }).click()
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: /Binned/ })
+      .first()
+      .click()
+    await expect(page).toHaveURL(`/p/${note.id}`)
+    await expect(page.getByTestId('trash-banner')).toBeVisible()
+
+    // A page of somebody else's workspace looks the same as a missing one.
+    const stranger = await registerUser(api)
+    const theirs = await createPage(api, stranger, {
+      workspace_id: (await ensureWorkspace(api, stranger)).id,
+      title: 'Not yours',
+    })
+    for (const id of [theirs.id, '00000000-0000-4000-8000-000000000000']) {
+      await page.goto(`/p/${id}`)
+      await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible()
+      await expect(
+        page.getByText("This page doesn't exist, or you don't have access to it.")
+      ).toBeVisible()
+    }
+    await page.getByRole('link', { name: 'Back to home' }).click()
+    await expect(page).toHaveURL('/home')
+    const refused = await api.get(`/pages/${theirs.id}`, { headers: authHeaders(user) })
+    expect(refused.status()).toBe(404)
+  })
+
+  test('quick find shows where a result lives and opens the first one with Enter', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const folder = await createPage(api, user, { workspace_id: workspace.id, title: 'Folder' })
+    const nested = await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: folder.id,
+      title: 'Haystack needle',
+    })
+    await page.goto('/home')
+    await expect(page.getByTestId('workspace-name')).toBeVisible()
+    await page.keyboard.press('Control+k')
+    const quickFind = page.getByRole('dialog', { name: 'Quick find' })
+    await quickFind.getByLabel('Search pages').fill('Haystack')
+    const result = quickFind.getByRole('option', { name: /Haystack needle/ })
+    await expect(result).toContainText('Folder')
+    await quickFind.getByLabel('Search pages').press('Enter')
+    await expect(page).toHaveURL(`/p/${nested.id}`)
+  })
+
+  test('the sidebar stays closed after a reload', async ({ authedPage: page, api, user }) => {
+    await ensureWorkspace(api, user)
+    await page.goto('/home')
+    await expect(page.getByTestId('workspace-name')).toBeVisible()
+    await page.keyboard.press('Control+Backslash')
+    const shell = page.getByTestId('sidebar')
+    await expect.poll(async () => (await shell.boundingBox())?.width ?? 999).toBeLessThan(2)
+    await page.reload()
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+    await expect.poll(async () => (await shell.boundingBox())?.width ?? 999).toBeLessThan(2)
+    await page.keyboard.press('Control+Backslash')
+    await expect.poll(async () => (await shell.boundingBox())?.width ?? 0).toBeGreaterThan(200)
+  })
+
+  test('the Share popover refuses an unknown invitee and copies the public link', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Shared' })
+    const published = await updatePage(api, user, note.id, { is_public: true })
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+    await page.goto(`/p/${note.id}`)
+    await page.getByRole('button', { name: 'Share', exact: true }).click()
+    const share = page.getByRole('dialog')
+    const stranger = uniqueEmail('nobody')
+    await share.getByLabel('Invite by email').fill(stranger)
+    await share.getByRole('button', { name: 'Invite' }).click()
+    await expect(errorToast(page).filter({ hasText: 'Could not add the member' })).toBeVisible()
+    expect((await listMembers(api, user, workspace.id)).map(m => m.email)).not.toContain(stranger)
+
+    await share.getByRole('tab', { name: 'Publish' }).click()
+    await share.getByRole('button', { name: 'Copy link' }).click()
+    await expect(page.getByText('Link copied')).toBeVisible()
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(`${FRONTEND_URL}/share/${published.public_id}`)
+  })
+
+  // Each action is sent after the session ended on another device: the server
+  // refuses it (401), the app says what failed, and nothing changed.
+  const refused: {
+    name: string
+    title: string
+    trashed?: boolean
+    /** Steps that send nothing, done while the session still works. */
+    prepare?: (page: Page) => Promise<void>
+    act: (page: Page) => Promise<void>
+  }[] = [
+    {
+      name: 'duplicating a page',
+      title: 'Could not duplicate the page',
+      prepare: async page => {
+        await page.getByRole('button', { name: 'Page options' }).click()
+      },
+      act: async page => {
+        await page.getByRole('menuitem', { name: 'Duplicate' }).click()
+      },
+    },
+    {
+      name: 'deleting a page',
+      title: 'Could not delete the page',
+      prepare: async page => {
+        await page.getByRole('button', { name: 'Page options' }).click()
+      },
+      act: async page => {
+        await page.getByRole('menuitem', { name: 'Delete' }).click()
+      },
+    },
+    {
+      name: 'moving a page',
+      title: 'Could not move the page',
+      prepare: async page => {
+        await page.getByRole('button', { name: 'Page options' }).click()
+        await page.getByRole('menuitem', { name: 'Move to' }).click()
+        await expect(page.getByRole('option', { name: 'Other' })).toBeVisible()
+      },
+      act: async page => {
+        await page.getByRole('option', { name: 'Other' }).click()
+      },
+    },
+    {
+      name: 'restoring a page',
+      title: 'Could not restore the page',
+      trashed: true,
+      act: async page => {
+        await page.getByRole('button', { name: 'Restore page' }).click()
+      },
+    },
+    {
+      name: 'deleting a page forever',
+      title: 'Could not delete the page',
+      trashed: true,
+      prepare: async page => {
+        await page.getByRole('button', { name: 'Delete permanently' }).click()
+        await expect(page.getByRole('alertdialog')).toBeVisible()
+      },
+      act: async page => {
+        await page
+          .getByRole('alertdialog')
+          .getByRole('button', { name: 'Delete permanently' })
+          .click()
+      },
+    },
+  ]
+  for (const { name, title, trashed, prepare, act } of refused) {
+    test(`${name} after the session ended elsewhere shows the error`, async ({
+      authedPage: page,
+      api,
+      user,
+    }) => {
+      const workspace = await ensureWorkspace(api, user)
+      await createPage(api, user, { workspace_id: workspace.id, title: 'Other' })
+      const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Target' })
+      if (trashed) await trashPage(api, user, note.id)
+      const live = liveEventsSettled(page, workspace.id)
+      await page.goto(`/p/${note.id}`)
+      await expect(sidebarPage(page, 'Other')).toBeVisible()
+      if (trashed) await expect(page.getByTestId('trash-banner')).toBeVisible()
+      // Everything the page loads by itself is in: only the action is refused.
+      await expect(page.getByTestId('editor')).toBeVisible({ timeout: 15_000 })
+      await prepare?.(page)
+
+      await live
+      await revokeSession(api, user)
+      await act(page)
+
+      await expect(errorToast(page)).toContainText(title)
+      await expect(page).toHaveURL(/\/login/)
+      const owner = { token: await loginUser(api, user.email, user.password) }
+      const after = await getPage(api, owner, note.id)
+      expect([after.parent_id, after.deleted_at === null]).toEqual([null, !trashed])
+      expect((await pageTree(api, owner, workspace.id)).map(item => item.title).sort()).toEqual(
+        trashed ? ['Other'] : ['Other', 'Target']
+      )
+    })
+  }
+})
+
+test.describe('pages: breadcrumbs, export names, locks and public pages (coverage)', () => {
+  test('a deep page keeps the first and the last two parents in its breadcrumbs', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    let parentId: string | null = null
+    let deepest = ''
+    for (const title of ['Level 1', 'Level 2', 'Level 3', 'Level 4', 'Level 5']) {
+      const created = await createPage(api, user, {
+        workspace_id: workspace.id,
+        parent_id: parentId,
+        title,
+      })
+      parentId = created.id
+      deepest = created.id
+    }
+    await page.goto(`/p/${deepest}`)
+    const crumbs = page.getByRole('navigation', { name: 'Breadcrumbs' })
+    await expect(crumbs.getByRole('link')).toHaveText(['Level 1', 'Level 3', 'Level 4'])
+    await expect(crumbs.getByTitle('Level 2')).toHaveText('…')
+    await expect(crumbs.getByTestId('breadcrumb-current')).toHaveText('Level 5')
+    await crumbs.getByRole('link', { name: 'Level 1' }).click()
+    await expect(page.getByLabel('Page title')).toHaveValue('Level 1')
+  })
+
+  test('exports with a file name safe for every system', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    for (const [title, file] of [
+      ['Plan: Q1/Q2?', 'Plan- Q1-Q2-.md'],
+      ['', 'Untitled.md'],
+    ]) {
+      const note = await createPage(api, user, { workspace_id: workspace.id, title })
+      await page.goto(`/p/${note.id}`)
+      await expect(page.getByTestId('editor')).toBeVisible({ timeout: 15_000 })
+      await page.getByRole('button', { name: 'Page options' }).click()
+      const download = page.waitForEvent('download')
+      await page.getByRole('menuitem', { name: 'Export Markdown' }).click()
+      expect((await download).suggestedFilename()).toBe(file)
+    }
+  })
+
+  test('a viewer sees that a page is locked and cannot unlock it', async ({
+    loginAs,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Frozen' })
+    await updatePage(api, user, note.id, { locked: true })
+    const viewer = await registerUser(api, uniqueEmail('viewer'), PASSWORD)
+    await addMember(api, user, workspace.id, viewer, 'viewer')
+    const viewerPage = await loginAs(viewer)
+    await viewerPage.goto(`/p/${note.id}`)
+    await expect(viewerPage.getByRole('button', { name: 'Page is locked' })).toBeDisabled()
+    await expect(viewerPage.getByRole('button', { name: 'Unlock page' })).toHaveCount(0)
+    expect((await getPage(api, user, note.id)).locked).toBe(true)
+  })
+
+  test('a share link that was never published says so', async ({ page }) => {
+    await page.goto('/share/never-published')
+    await expect(page.getByRole('heading', { name: "This page isn't available" })).toBeVisible()
+    await page.getByRole('link', { name: /Go to/ }).click()
+    await expect(page).toHaveURL('/')
+  })
+
+  test('a public page keeps small text in the dark theme', async ({ page, api, user }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Night print' })
+    const shared = await updatePage(api, user, note.id, { small_text: true, is_public: true })
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await page.goto(`/share/${shared.public_id}`)
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Night print')
+    await expect(page.getByTestId('public-editor')).toHaveClass(/nx-small-text/)
+    await expect(page.locator('html')).toHaveClass(/dark/)
+  })
 })

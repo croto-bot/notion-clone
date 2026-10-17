@@ -5,8 +5,9 @@ The server runs with LOG_FORMAT=json; ``server_log`` reads what it printed.
 
 from __future__ import annotations
 
+import json
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from websockets.sync.client import connect
 
@@ -249,3 +250,44 @@ def test_secrets_stay_out_of_the_logs_when_a_request_fails(
     for secret in (user.password, register_password, new_password, token):
         assert secret not in output
     assert "$argon2" not in output
+
+
+def test_every_line_carries_the_deployment_context(
+    api: httpx.Client, server_log: ServerLogView
+) -> None:
+    """VERSION, COMMIT_HASH and INSTANCE_ID (set by the suite) tag every line."""
+    response = api.get("/health")
+
+    event = server_log.wide_event_for(response)
+    assert (event["version"], event["commit_hash"], event["instance_id"]) == (
+        "e2e-version",
+        "e2e-commit",
+        "e2e-instance",
+    )
+    access_line = _raw_record(server_log, response.request.url.path)
+    assert access_line["extra"]["version"] == "e2e-version"
+
+
+def test_stdlib_log_lines_name_their_real_source(
+    api: httpx.Client, server_log: ServerLogView
+) -> None:
+    """uvicorn logs through stdlib logging; loguru must report uvicorn's
+    module and function as the source, not the logging package's internals."""
+    probe = uuid.uuid4().hex
+
+    api.get("/health", params={"probe": probe})
+
+    record = _raw_record(server_log, probe)
+    assert record["name"].startswith("uvicorn."), record["name"]
+    assert "logging" not in record["file"]["path"], record["file"]
+
+
+def _raw_record(server_log: ServerLogView, needle: str) -> dict[str, Any]:
+    """The loguru record of the first non-wide-event line that mentions ``needle``."""
+    server_log.wait_for(lambda e: needle in str(e.get("message", "")))
+    for line in server_log.lines():
+        if line.startswith("{") and needle in line:
+            record = json.loads(line)["record"]
+            if record["message"] != "request_completed":
+                return record
+    raise AssertionError(f"no raw log line mentions {needle!r}")

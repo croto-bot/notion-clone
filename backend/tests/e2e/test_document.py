@@ -157,3 +157,18 @@ def test_put_document_after_the_page_was_purged_is_404(
     assert (
         db.fetch_one("SELECT count(*) FROM pages WHERE id = %s", (page["id"],))[0] == 0
     )
+
+
+def test_put_document_on_a_trashed_page_is_rejected(auth_client: httpx.Client) -> None:
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+    auth_client.delete(f"/pages/{page['id']}")
+    _doc, update = doc_with_text("Written into the trash")
+
+    response = auth_client.put(
+        f"/pages/{page['id']}/document",
+        json={"state": base64.b64encode(update).decode()},
+    )
+
+    assert_error(response, 400, "page_in_trash")
+    assert auth_client.get(f"/pages/{page['id']}/document").json() == {"state": None}

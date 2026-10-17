@@ -138,8 +138,12 @@ export function FilterPopover() {
   const filters = view.filters
   // The popover's selects change in quick succession and each change closes
   // over this state, so keep the latest view in a ref: a slow render between
-  // two changes must not drop the first one.
+  // two changes must not drop the first one. The ref follows the view the
+  // database shows: another view, or a sort saved meanwhile, replaces it.
   const viewRef = useRef(view)
+  useEffect(() => {
+    viewRef.current = view
+  }, [view])
   const setFilters = (next: ViewFilter[]) => {
     viewRef.current = { ...viewRef.current, filters: next }
     updateView(viewRef.current)

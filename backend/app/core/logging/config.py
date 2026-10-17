@@ -1,5 +1,6 @@
 """Logging configuration using loguru."""
 
+import inspect
 import logging
 import sys
 
@@ -19,9 +20,11 @@ class InterceptHandler(logging.Handler):
         except ValueError:
             level = record.levelno
 
-        # Find caller from where originated the logged message
-        frame, depth = logging.currentframe(), 2
-        while frame and frame.f_code.co_filename == logging.__file__:
+        # Find the caller that logged the message: skip this frame, then every
+        # frame of the logging package (loguru's documented recipe), so the
+        # record names e.g. uvicorn as its source, not the logging package.
+        frame, depth = inspect.currentframe(), 0
+        while frame and (depth == 0 or frame.f_code.co_filename == logging.__file__):
             frame = frame.f_back
             depth += 1
 
