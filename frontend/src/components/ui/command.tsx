@@ -4,16 +4,6 @@ import { SearchIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
-function Command({ className, ...props }: React.ComponentProps<typeof CommandPrimitive>) {
-  return (
-    <CommandPrimitive
-      data-slot="command"
-      className={cn('flex h-full w-full flex-col overflow-hidden', className)}
-      {...props}
-    />
-  )
-}
-
 function CommandInput({
   className,
   ...props
@@ -85,4 +75,4 @@ function CommandItem({ className, ...props }: React.ComponentProps<typeof Comman
   )
 }
 
-export { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem }
+export { CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem }

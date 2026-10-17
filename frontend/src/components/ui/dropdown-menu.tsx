@@ -17,14 +17,6 @@ function DropdownMenuTrigger({
   return <DropdownMenuPrimitive.Trigger data-slot="dropdown-menu-trigger" {...props} />
 }
 
-function DropdownMenuGroup({ ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Group>) {
-  return <DropdownMenuPrimitive.Group data-slot="dropdown-menu-group" {...props} />
-}
-
-function DropdownMenuSub({ ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Sub>) {
-  return <DropdownMenuPrimitive.Sub data-slot="dropdown-menu-sub" {...props} />
-}
-
 function DropdownMenuContent({
   className,
   sideOffset = 4,
@@ -39,24 +31,6 @@ function DropdownMenuContent({
         align={align}
         className={cn(
           'nx-pop bg-popover text-popover-foreground shadow-menu z-[60] max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-[200px] overflow-y-auto overflow-x-hidden rounded-[6px] py-1 text-[14px]',
-          className
-        )}
-        {...props}
-      />
-    </DropdownMenuPrimitive.Portal>
-  )
-}
-
-function DropdownMenuSubContent({
-  className,
-  ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
-  return (
-    <DropdownMenuPrimitive.Portal>
-      <DropdownMenuPrimitive.SubContent
-        data-slot="dropdown-menu-sub-content"
-        className={cn(
-          'nx-pop bg-popover text-popover-foreground shadow-menu z-[60] min-w-[180px] overflow-hidden rounded-[6px] py-1 text-[14px]',
           className
         )}
         {...props}
@@ -85,38 +59,6 @@ function DropdownMenuItem({
   )
 }
 
-function DropdownMenuSubTrigger({
-  className,
-  children,
-  ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.SubTrigger>) {
-  return (
-    <DropdownMenuPrimitive.SubTrigger
-      data-slot="dropdown-menu-sub-trigger"
-      className={cn(menuItemClass, 'data-[state=open]:bg-hover', className)}
-      {...props}
-    >
-      {children}
-      <span aria-hidden className="text-subtle ml-auto text-[12px]">
-        ›
-      </span>
-    </DropdownMenuPrimitive.SubTrigger>
-  )
-}
-
-function DropdownMenuLabel({
-  className,
-  ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.Label>) {
-  return (
-    <DropdownMenuPrimitive.Label
-      data-slot="dropdown-menu-label"
-      className={cn('text-subtle px-3 pt-1.5 pb-1 text-[12px] font-medium', className)}
-      {...props}
-    />
-  )
-}
-
 function DropdownMenuSeparator({
   className,
   ...props
@@ -131,20 +73,10 @@ function DropdownMenuSeparator({
 }
 
 /** Right-aligned hint inside a menu row, e.g. a keyboard shortcut. */
-function MenuHint({ className, ...props }: React.ComponentProps<'span'>) {
-  return <span className={cn('text-subtle ml-auto pl-4 text-[12px]', className)} {...props} />
-}
-
 export {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubTrigger,
-  DropdownMenuSubContent,
-  MenuHint,
 }
