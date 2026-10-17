@@ -188,7 +188,19 @@ export function useUpdatePage() {
       if (Object.keys(patch).length > 0) patchPageEverywhere(queryClient, id, patch)
       return { snapshot }
     },
-    onSuccess: async (page, { id, seq }) => {
+    onSuccess: async (page, { id, data, seq }) => {
+      // Breadcrumbs of an open descendant carry this page's title and icon.
+      // This tab skips its own page.updated, so it refetches them here. The
+      // page's own detail is left alone: the stored response owns it.
+      if (data.title !== undefined || data.icon !== undefined) {
+        void queryClient.invalidateQueries({
+          queryKey: ['pages', 'detail'],
+          predicate: query =>
+            (query.state.data as PageResponse | undefined)?.breadcrumbs.some(
+              crumb => crumb.id === id
+            ) ?? false,
+        })
+      }
       // A read that started before the commit can still be in flight; its
       // response would land right after this store and revert it (the views
       // list unmounted the open "Delete view" menu under the pointer).

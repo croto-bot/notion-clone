@@ -428,6 +428,34 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     expect((await getPage(api, user, parent.id)).parent_id).not.toBeNull()
   })
 
+  test('renaming a parent from the sidebar updates the open child breadcrumbs', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const parent = await createPage(api, user, { workspace_id: workspace.id, title: 'Old parent' })
+    const child = await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: parent.id,
+      title: 'Open child',
+    })
+    await page.goto(`/p/${child.id}`)
+    const crumbs = page.getByRole('navigation', { name: 'Breadcrumbs' })
+    await expect(crumbs.getByRole('link', { name: 'Old parent' })).toBeVisible({ timeout: 15_000 })
+
+    await sidebarPage(page, 'Old parent').hover()
+    await page.getByRole('button', { name: 'Options for Old parent' }).click()
+    await page.getByRole('menuitem', { name: 'Rename' }).click()
+    const input = sidebar(page).getByLabel('Page title')
+    await input.fill('New parent')
+    await input.press('Enter')
+
+    await expect(crumbs.getByRole('link', { name: 'New parent' })).toBeVisible()
+    await expect(crumbs.getByRole('link', { name: 'Old parent' })).toHaveCount(0)
+    expect((await getPage(api, user, parent.id)).title).toBe('New parent')
+  })
+
   test('typing in the document does not refetch the open page', async ({
     authedPage: page,
     api,
