@@ -12,6 +12,8 @@ from tests.e2e.helpers import create_page, create_workspace, doc_with_text
 if TYPE_CHECKING:
     import httpx
 
+    from tests.e2e.stack import Database
+
 
 def test_duplicate_copies_the_page_after_the_source(
     auth_client: httpx.Client,
@@ -84,3 +86,36 @@ def test_duplicate_of_a_trashed_page_is_rejected(auth_client: httpx.Client) -> N
 
     assert response.status_code == 400
     assert response.json()["error_code"] == "page_in_trash"
+
+
+def test_duplicate_skips_trashed_children(
+    auth_client: httpx.Client, db: Database
+) -> None:
+    """A trashed child (and its subtree) must not come back in the copy.
+
+    Review finding 4: the copy used to include trashed descendants as live
+    pages, resurrecting deleted content with its Yjs document.
+    """
+    workspace = create_workspace(auth_client)
+    parent = create_page(auth_client, workspace["id"], title="Parent")
+    child = create_page(
+        auth_client, workspace["id"], parent_id=parent["id"], title="Child"
+    )
+    grandchild = create_page(
+        auth_client, workspace["id"], parent_id=child["id"], title="Grandchild"
+    )
+    assert auth_client.delete(f"/pages/{child['id']}").status_code == 204
+
+    response = auth_client.post(f"/pages/{parent['id']}/duplicate")
+
+    assert response.status_code == 201
+    assert response.json()["has_children"] is False
+    tree = auth_client.get(f"/workspaces/{workspace['id']}/page-tree").json()
+    assert [page["title"] for page in tree] == ["Parent", "Parent"]
+    assert auth_client.get(f"/pages/{child['id']}").json()["deleted_at"] is not None
+    assert (
+        auth_client.get(f"/pages/{grandchild['id']}").json()["deleted_at"] is not None
+    )
+    # parent, trashed child + grandchild, and the copy: nothing else
+    assert db.fetch_one("SELECT count(*) FROM pages")[0] == 4
+    assert db.fetch_one("SELECT count(*) FROM pages WHERE deleted_at IS NULL")[0] == 2

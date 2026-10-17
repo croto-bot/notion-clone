@@ -398,11 +398,16 @@ class PageService(BaseService[Page]):
 
         subtree_ids = await self.repo.subtree_ids(page_id)
         nodes = {node.id: node for node in await self.repo.get_many(subtree_ids)}
+        # Trashed descendants (and their subtrees) are skipped: the copy must
+        # not resurrect deleted content (review finding 4).
+        nodes = {
+            node_id: node for node_id, node in nodes.items() if node.deleted_at is None
+        }
 
         siblings = await self.repo.siblings(page.workspace_id, page.parent_id)
         copy_position = self._position_after(siblings, page_id, after_id_sent=True)
 
-        id_map = {old_id: uuid.uuid4() for old_id in subtree_ids}
+        id_map = {old_id: uuid.uuid4() for old_id in nodes}
         rows: list[dict[str, Any]] = []
         for old_id in self._breadth_first(nodes, page_id):
             node = nodes[old_id]
