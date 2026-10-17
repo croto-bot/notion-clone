@@ -24,9 +24,7 @@ import { TopbarButton } from '@/components/Topbar'
 import { useAppShell } from '@/contexts/AppShellContext'
 import { usePageEditorApi } from '@/contexts/PageEditorContext'
 import { useWorkspace } from '@/contexts/WorkspaceContext'
-import { markdownToYjsState } from '@/features/editor/markdown'
 import { usePageActions } from '@/hooks/usePageActions'
-import { usePutDocument } from '@/hooks/usePages'
 import { displayNameOf } from '@/hooks/useUser'
 import { pageLabel } from '@/features/pages/page-tree'
 import { formatDateTime } from '@/lib/time'
@@ -86,7 +84,6 @@ export function PageOptionsMenu({ page }: { page: PageResponse }) {
   const { openMoveTo } = useAppShell()
   const { api: editor } = usePageEditorApi()
   const { updatePage, duplicatePage, deletePage, toggleFavorite, copyLink } = usePageActions()
-  const putDocument = usePutDocument()
   const fileInput = useRef<HTMLInputElement>(null)
   const isDocument = page.kind === 'page'
 
@@ -96,15 +93,13 @@ export function PageOptionsMenu({ page }: { page: PageResponse }) {
   }
 
   const importFile = async (file: File | undefined) => {
-    if (!file) return
+    if (!file || !editor) return
     try {
       const markdown = await file.text()
-      if (editor) {
-        await editor.importMarkdown(markdown)
-      } else {
-        const state = await markdownToYjsState(markdown)
-        await putDocument.mutateAsync({ id: page.id, state })
-      }
+      // Only the live editor's replaceBlocks path: before it exists, a raw
+      // Y.Doc PUT would merge into the page's document instead of replacing
+      // it. The menu item stays disabled until the editor is up.
+      await editor.importMarkdown(markdown)
       toast.success(`Imported ${file.name}`)
     } catch (error) {
       toastApiError(error, 'Could not import the Markdown file')
@@ -203,7 +198,7 @@ export function PageOptionsMenu({ page }: { page: PageResponse }) {
               </DropdownMenuItem>
               {canEdit && (
                 <DropdownMenuItem
-                  disabled={page.locked}
+                  disabled={!editor || page.locked}
                   onSelect={() => fileInput.current?.click()}
                 >
                   <Upload />

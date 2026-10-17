@@ -104,6 +104,37 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
     await expect.poll(async () => (await getDocument(api, user, note.id)).state).not.toBeNull()
   })
 
+  test('keeps Import Markdown disabled until the editor exists', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Gate import' })
+    await page.goto(`/p/${note.id}`)
+    await expect(page.getByTestId('editor')).toBeVisible({ timeout: 15_000 })
+
+    // Back to the page without a connected socket: no editor, no editor API.
+    await page.getByRole('link', { name: 'Home' }).click()
+    await expect(
+      page.getByRole('heading', { name: /Good (morning|afternoon|evening)/ })
+    ).toBeVisible()
+    await page.context().setOffline(true)
+    await sidebarPage(page, 'Gate import').getByRole('link', { name: 'Gate import' }).click()
+    await page.getByRole('button', { name: 'Page options' }).click()
+    // The socket is still connecting: importing now would PUT a fresh Y.Doc
+    // that MERGES into the page instead of replacing it, so the item waits.
+    await expect(page.getByRole('menuitem', { name: 'Import Markdown' })).toBeDisabled()
+    await page.keyboard.press('Escape')
+
+    // Once the editor is up, the import path is available again.
+    await page.context().setOffline(false)
+    await expect(page.getByTestId('editor')).toBeVisible({ timeout: 30_000 })
+    await page.getByRole('button', { name: 'Page options' }).click()
+    await expect(page.getByRole('menuitem', { name: 'Import Markdown' })).toBeEnabled()
+    await page.keyboard.press('Escape')
+  })
+
   test('two people see each other type and each other cursors', async ({
     authedPage: page,
     loginAs,
