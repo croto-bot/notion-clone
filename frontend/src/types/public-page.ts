@@ -6,6 +6,9 @@ export interface PublicRow {
   title: string
   icon: string | null
   properties: RowProperties
+  /** Computed columns (created/last edited time) render from these. */
+  created_at: string
+  last_edited_at: string
 }
 
 export interface PublicChild {

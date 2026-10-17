@@ -387,6 +387,8 @@ async def public_page(
                 title=row.title,
                 icon=row.icon,
                 properties=dict(row.properties or {}),
+                created_at=row.created_at,
+                last_edited_at=row.last_edited_at,
             )
             for row in rows
         ],

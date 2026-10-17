@@ -117,7 +117,7 @@ with `page`, `size`) unless marked **(not paged)**.
 
 | Method | Path | Result |
 |---|---|---|
-| GET | `/public/pages/{public_id}` | `PublicPageResponse` = `{id, title, icon, cover, cover_position, full_width, small_text, font, kind, state (base64 Yjs | null), database_schema, database_views, rows (for databases: `[{id, title, icon, properties}]`), children: [{id, title, icon, public_id}] (public children only)}`. 404 when not published or trashed |
+| GET | `/public/pages/{public_id}` | `PublicPageResponse` = `{id, title, icon, cover, cover_position, full_width, small_text, font, kind, state (base64 Yjs | null), database_schema, database_views, rows (for databases: `[{id, title, icon, properties, created_at, last_edited_at}]`), children: [{id, title, icon, public_id}] (public children only)}`. 404 when not published or trashed |
 
 ### Error codes the backend adds to this section's tables
 

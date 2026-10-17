@@ -133,6 +133,10 @@ class PublicRow(BaseModel):
     title: str
     icon: str | None
     properties: dict[str, Any]
+    # Computed columns (created_time / last_edited_time) read these; without
+    # them every such column renders empty and filters on them hide all rows.
+    created_at: datetime
+    last_edited_at: datetime
 
 
 class PublicChild(BaseModel):

@@ -409,10 +409,23 @@ test.describe('databases and publish (F13, F15)', () => {
       parent_id: database.id,
       title: 'Visible row',
     })
+    // A computed column: on the public page it can only render from the row's
+    // own timestamps, so the public rows contract has to carry them.
+    await updatePage(api, user, database.id, {
+      database_schema: [
+        ...(database.database_schema ?? []),
+        { id: 'created-col', name: 'Created', type: 'created_time' },
+      ],
+    })
     const shared = await updatePage(api, user, database.id, { is_public: true })
     await page.goto(`/share/${shared.public_id}`)
     await expect(page.getByTestId('database-view')).toBeVisible()
-    await expect(page.getByRole('row', { name: 'Visible row' })).toBeVisible()
+    const publicRow = page.getByRole('row', { name: 'Visible row' })
+    await expect(publicRow).toBeVisible()
+    await expect(publicRow.getByText(/20\d\d/)).toBeVisible()
     await expect(page.getByRole('button', { name: 'New row' })).toBeHidden()
+    const publicDatabase = await getPublicPage(api, shared.public_id!)
+    expect(publicDatabase.rows[0].created_at).toBeTruthy()
+    expect(publicDatabase.rows[0].last_edited_at).toBeTruthy()
   })
 })
