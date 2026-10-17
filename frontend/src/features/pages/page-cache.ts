@@ -1,4 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query'
+import type { RowProperties } from '@/types/database'
 import type { PageResponse, PageSummary, UpdatePageData } from '@/types/page'
 import { queryKeys } from '@/lib/query-keys'
 
@@ -45,7 +46,17 @@ export function storePageResponse(queryClient: QueryClient, page: PageResponse) 
   })
 }
 
-/** Shows a change of row values, schema or views before the server answers. */
+/** Merges a per-key property patch into a row's stored properties (`null` removes the key). */
+function mergeProperties(base: RowProperties | undefined, patch: RowProperties): RowProperties {
+  const next: RowProperties = { ...(base ?? {}) }
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null || value === undefined) delete next[key]
+    else next[key] = value
+  }
+  return next
+}
+
+/** Shows a change of row values, schema or views before the server answers (properties merge per key). */
 export function patchPageContent(
   queryClient: QueryClient,
   id: string,
@@ -54,11 +65,16 @@ export function patchPageContent(
   if (data.properties !== undefined) {
     const properties = data.properties
     queryClient.setQueriesData<PageResponse[]>({ queryKey: ['pages', 'rows'] }, rows =>
-      rows?.map(row => (row.id === id ? { ...row, properties } : row))
+      rows?.map(row =>
+        row.id === id ? { ...row, properties: mergeProperties(row.properties, properties) } : row
+      )
     )
+    queryClient.setQueryData<PageResponse>(queryKeys.pages.detail(id), old =>
+      old ? { ...old, properties: mergeProperties(old.properties, properties) } : old
+    )
+    return
   }
   const content: Partial<PageResponse> = {}
-  if (data.properties !== undefined) content.properties = data.properties
   if (data.database_schema !== undefined) content.database_schema = data.database_schema
   if (data.database_views !== undefined) content.database_views = data.database_views
   if (Object.keys(content).length > 0) {

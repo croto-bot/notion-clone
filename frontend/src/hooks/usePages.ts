@@ -106,25 +106,37 @@ export function useCreatePage() {
   })
 }
 
+/** Sequence number of the newest update mutation per page: an older mutation's
+ * response must never overwrite what a newer one already wrote to the cache. */
+const updateMutationClock = new Map<string, number>()
+
 export function useUpdatePage() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: UpdatePageData }) =>
       api.patch<PageResponse>(API.PAGES.DETAIL(id), data),
     onMutate: async ({ id, data }) => {
-      // Cancel in-flight reads of this page first: a fetch that started before
+      // Sequence this mutation: a slower older response is dropped in onSuccess.
+      const at = (updateMutationClock.get(id) ?? 0) + 1
+      updateMutationClock.set(id, at)
+      // Cancel in-flight reads first: a fetch that started before
       // the change would resolve after the optimistic patch and clobber it
-      // (a filter or favorite that visibly "jumps back").
+      // (a filter or favorite that visibly "jumps back"). Row edits are cached
+      // under the database's rows key, not the row's, so cancel the prefix.
       await queryClient.cancelQueries({ queryKey: ['pages', 'detail', id] })
-      await queryClient.cancelQueries({ queryKey: ['pages', 'rows', id] })
+      await queryClient.cancelQueries({ queryKey: ['pages', 'rows'] })
       patchPageContent(queryClient, id, data)
       const patch: Parameters<typeof patchPageEverywhere>[2] = {}
       if (data.title !== undefined) patch.title = data.title
       if (data.icon !== undefined) patch.icon = data.icon
       if (data.is_public !== undefined) patch.is_public = data.is_public
       if (Object.keys(patch).length > 0) patchPageEverywhere(queryClient, id, patch)
+      return { at }
     },
-    onSuccess: page => {
+    onSuccess: (page, { id }, context) => {
+      // A newer mutation for the same page already answered (or will): storing
+      // this older response would write its stale title/properties back.
+      if (context && updateMutationClock.get(id) !== context.at) return
       storePageResponse(queryClient, page)
     },
     onError: (_error, { id }) => {

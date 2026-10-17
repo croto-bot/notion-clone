@@ -77,6 +77,52 @@ test.describe('databases and publish (F13, F15)', () => {
     await expect(page.getByTestId('row-properties')).toContainText('Status')
   })
 
+  test('sends only the changed property key when a cell is edited', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Merged',
+    })
+    const status = property(database.database_schema, 'Status')
+    const tags = property(database.database_schema, 'Tags')
+    const started = status.options?.find(option => option.name === 'Not started')
+    const done = status.options?.find(option => option.name === 'Done')
+    const row = await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: 'One key',
+      // The row already owns a value of another key (set by "another editor").
+      properties: { [status.id]: started!.id, [tags.id]: ['urgent'] },
+    })
+    await page.goto(`/p/${database.id}`)
+    await expect(page.getByRole('row', { name: 'One key' })).toBeVisible()
+
+    const rowPatches: Record<string, unknown>[] = []
+    page.on('request', request => {
+      if (request.method() === 'PATCH' && request.url().endsWith(`/pages/${row.id}`)) {
+        rowPatches.push(request.postDataJSON() as Record<string, unknown>)
+      }
+    })
+    await page.getByRole('button', { name: `Status of One key` }).click()
+    await page.getByRole('button', { name: 'Done', exact: true }).click()
+
+    await expect
+      .poll(async () => (await listRows(api, user, database.id))[0].properties)
+      .toEqual({ [status.id]: done!.id, [tags.id]: ['urgent'] })
+    const propertyPatches = rowPatches.filter(patch => patch.properties !== undefined)
+    expect(propertyPatches.length).toBeGreaterThan(0)
+    // Only the changed key crosses the wire: the server merges per key, so a
+    // stale copy of the row's other keys can never overwrite another editor.
+    for (const patch of propertyPatches) {
+      expect(Object.keys(patch.properties as Record<string, unknown>)).toEqual([status.id])
+    }
+  })
+
   test('drags a card between board columns', async ({ authedPage: page, api, user }) => {
     const workspace = await ensureWorkspace(api, user)
     const database = await createPage(api, user, {

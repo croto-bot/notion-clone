@@ -5,7 +5,6 @@ import type {
   OptionColor,
   PropertyType,
   PropertyValue,
-  RowProperties,
   SelectOption,
   ViewType,
 } from '@/types/database'
@@ -79,21 +78,6 @@ export function viewsOf(views: DatabaseView[] | null | undefined): DatabaseView[
 
 export function schemaOf(schema: DatabaseProperty[] | null | undefined): DatabaseProperty[] {
   return schema && schema.length > 0 ? schema : [{ id: 'title', name: 'Name', type: 'title' }]
-}
-
-export function withValue(row: RowLike, propertyId: string, value: PropertyValue): RowProperties {
-  const next: RowProperties = { ...(row.properties ?? {}) }
-  if (
-    value === null ||
-    value === undefined ||
-    value === '' ||
-    (Array.isArray(value) && value.length === 0)
-  ) {
-    delete next[propertyId]
-  } else {
-    next[propertyId] = value
-  }
-  return next
 }
 
 export function newId(): string {

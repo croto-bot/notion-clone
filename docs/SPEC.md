@@ -97,7 +97,7 @@ with `page`, `size`) unless marked **(not paged)**.
 | GET | `/workspaces/{id}/favorites` | | **(not paged)** `PageSummary[]` of my favorites, by position |
 | POST | `/pages` | `{workspace_id, parent_id?, kind?, title?, icon?, after_id?, properties?}` | 201 `PageResponse`. Without `after_id` the page goes last. `kind=database` gets the default schema (Name, Tags multi_select, Status select with Not started/In progress/Done) and one `Table` view |
 | GET | `/pages/{id}` | | `PageResponse`. Also records a visit (upsert `page_visits`) |
-| PATCH | `/pages/{id}` | any of `{title, icon, cover, cover_position, full_width, small_text, locked, font, is_public, database_schema, database_views, properties}` | `PageResponse`; sets `last_edited_*`; `is_public: true` creates `public_id` once |
+| PATCH | `/pages/{id}` | any of `{title, icon, cover, cover_position, full_width, small_text, locked, font, is_public, database_schema, database_views, properties}` | `PageResponse`; sets `last_edited_*`; `is_public: true` creates `public_id` once. `properties` is a partial map merged per key (a key set to `null` removes that key; `properties: null` clears all), so two clients editing different keys of one row both survive; clients should send only the key they changed |
 | POST | `/pages/{id}/move` | `{parent_id: uuid | null, after_id?: uuid | null}` | `PageResponse`. `after_id = null` = first. A page cannot move into itself or its own subtree (400 `invalid_move`) |
 | POST | `/pages/{id}/duplicate` | | 201 `PageResponse` of the copy (same title, like Notion), placed right after the source, with the whole subtree and Yjs content |
 | DELETE | `/pages/{id}` | | 204. Moves the page and its subtree to the trash |

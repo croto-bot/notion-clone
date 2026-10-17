@@ -116,6 +116,39 @@ def test_row_properties_can_be_updated(auth_client: httpx.Client) -> None:
     assert updated["properties"] == {"title": "Renamed row", "tags": ["a", "b"]}
 
 
+def test_row_properties_patch_merges_per_key(auth_client: httpx.Client) -> None:
+    """Two clients editing different keys of one row must not overwrite each
+    other, and a key set to null removes exactly that key."""
+    workspace = create_workspace(auth_client)
+    database = create_page(auth_client, workspace["id"], kind="database")
+    row = create_page(
+        auth_client,
+        workspace["id"],
+        parent_id=database["id"],
+        properties={"tags": ["kept"], "status": "todo"},
+    )
+
+    # A client that only knows about its own key sends only that key.
+    first = auth_client.patch(
+        f"/pages/{row['id']}", json={"properties": {"priority": 1}}
+    )
+    assert first.status_code == 200
+    assert first.json()["properties"] == {
+        "tags": ["kept"],
+        "status": "todo",
+        "priority": 1,
+    }
+
+    second = auth_client.patch(
+        f"/pages/{row['id']}", json={"properties": {"tags": None}}
+    )
+    assert second.status_code == 200
+    assert second.json()["properties"] == {"status": "todo", "priority": 1}
+
+    stored = auth_client.get(f"/pages/{row['id']}").json()
+    assert stored["properties"] == {"status": "todo", "priority": 1}
+
+
 def test_page_options_can_be_updated(auth_client: httpx.Client) -> None:
     workspace = create_workspace(auth_client)
     page = create_page(auth_client, workspace["id"])

@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import { usePageActions } from '@/hooks/usePageActions'
-import { withValue, type RowLike } from '@/features/database/properties'
+import type { RowLike } from '@/features/database/properties'
 import type { DatabaseProperty, DatabaseView, PropertyValue } from '@/types/database'
 
 export function useDatabaseMutations(databaseId: string) {
@@ -26,7 +26,15 @@ export function useDatabaseMutations(databaseId: string) {
         void updatePage(row.id, { title: typeof value === 'string' ? value : '' })
         return
       }
-      void updatePage(row.id, { properties: withValue(row, property.id, value) })
+      // Only the changed key crosses the wire: the server merges properties
+      // per key, so a stale copy of the row's other keys can never overwrite
+      // what another editor saved in the meantime. null clears the key.
+      const empty =
+        value === null ||
+        value === undefined ||
+        value === '' ||
+        (Array.isArray(value) && value.length === 0)
+      void updatePage(row.id, { properties: { [property.id]: empty ? null : value } })
     },
     [updatePage]
   )
