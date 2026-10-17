@@ -114,3 +114,58 @@ test.describe('brand, theme and database layout', () => {
     expect(chipColor).not.toBe('rgba(0, 0, 0, 0)')
   })
 })
+
+test.describe('sidebar resize handle (fix round 1)', () => {
+  test('shows a visible outline when the resize handle takes keyboard focus', async ({
+    authedPage: page,
+  }) => {
+    await page.goto('/home')
+    const handle = page.getByRole('slider', { name: 'Resize sidebar' })
+    await expect(handle).toBeVisible()
+
+    // Real keyboard navigation: Tab until the focus lands on the handle.
+    for (let i = 0; i < 30; i++) {
+      if (await handle.evaluate(el => el === document.activeElement)) break
+      await page.keyboard.press('Tab')
+    }
+    await expect(handle).toBeFocused()
+
+    const outline = await handle.evaluate(el => {
+      const style = getComputedStyle(el)
+      return { width: style.outlineWidth, style: style.outlineStyle }
+    })
+    expect(outline.style).toBe('solid')
+    expect(parseFloat(outline.width)).toBeGreaterThanOrEqual(2)
+    // The ring's base color at full strength: 3.6:1 on the light sidebar,
+    // 4.5:1 on the dark one (var(--ring) at 0.57 alpha is ~2:1). The handle
+    // transitions colors, so the computed value settles after focus lands.
+    await expect
+      .poll(async () => handle.evaluate(el => getComputedStyle(el).outlineColor))
+      .toBe('rgb(35, 131, 226)')
+  })
+
+  test('never lands on the resize handle while the sidebar is collapsed', async ({
+    authedPage: page,
+  }) => {
+    await page.goto('/home')
+    // The shortcut listener mounts with the shell: wait for it before pressing.
+    await expect(page.getByTestId('workspace-name')).toBeVisible()
+    await page.keyboard.press('Control+Backslash')
+    const sidebar = page.getByTestId('sidebar')
+    await expect.poll(async () => (await sidebar.boundingBox())?.width ?? 999).toBeLessThan(2)
+
+    const focusIsHandle = () =>
+      page.evaluate(() => {
+        const el = document.activeElement
+        return (
+          !!el &&
+          el.getAttribute('role') === 'slider' &&
+          el.getAttribute('aria-label') === 'Resize sidebar'
+        )
+      })
+    for (let i = 0; i < 30; i++) {
+      await page.keyboard.press('Tab')
+      expect(await focusIsHandle(), `Tab ${i + 1} landed on the handle`).toBe(false)
+    }
+  })
+})
