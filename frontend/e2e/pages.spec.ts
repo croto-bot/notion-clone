@@ -1,5 +1,4 @@
 import { readFile } from 'node:fs/promises'
-import type { Request } from '@playwright/test'
 import {
   test,
   expect,
@@ -23,6 +22,7 @@ import {
   PASSWORD,
   purgePage,
   registerUser,
+  type Request,
   searchPages,
   sidebar,
   sidebarPage,
@@ -472,7 +472,7 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     await expect(sidebar(page).locator(`[data-page-id="${note.id}"]`)).toBeVisible()
     await editor.click()
     // Let the first load and the socket-open reload finish before counting.
-    await page.waitForTimeout(1500)
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 1500)))
 
     const reads: string[] = []
     const onRequest = (request: Request) => {
@@ -483,7 +483,7 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     page.on('request', onRequest)
     await page.keyboard.type('Steady words typed for a while. '.repeat(3), { delay: 50 })
     // The last save lands about a second after the last keystroke.
-    await page.waitForTimeout(1500)
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 1500)))
     page.off('request', onRequest)
 
     expect(reads, `reads while typing: ${JSON.stringify(reads)}`).toEqual([])
