@@ -42,7 +42,7 @@ function TitleCell({ row }: { row: RowLike }) {
   }
 
   return (
-    <div className="group/title flex h-[33px] items-center">
+    <div className="group/title flex min-h-[33px] items-center">
       <PageIcon icon={row.icon} size={18} className="ml-2 shrink-0" />
       {draft !== null ? (
         <input
@@ -67,7 +67,7 @@ function TitleCell({ row }: { row: RowLike }) {
           aria-label={`Title: ${label}`}
           disabled={!editable}
           onClick={() => setDraft(row.title)}
-          className="h-[33px] min-w-0 flex-1 cursor-text px-1.5 text-left text-[14px] leading-[20px] font-medium disabled:cursor-default"
+          className="min-h-[33px] w-full min-w-0 flex-1 cursor-text px-1.5 text-left text-[14px] leading-[20px] font-medium disabled:cursor-default"
         >
           <span className={cn('block truncate', !row.title.trim() && 'text-subtle font-normal')}>
             {label}
@@ -132,7 +132,10 @@ export function DatabaseTable() {
   const width = TITLE_WIDTH + others.length * COLUMN_WIDTH + (editable ? ADD_WIDTH : 0)
 
   return (
-    <div className="nx-scroll -ml-8 overflow-x-auto pb-2 pl-8" data-testid="database-table">
+    <div
+      className="nx-scroll -ml-8 overflow-x-auto pb-2 pl-8"
+      data-testid="database-table"
+    >
       <div role="table" aria-label="Table" style={{ minWidth: width }}>
         <div
           role="row"
@@ -173,7 +176,7 @@ export function DatabaseTable() {
             role="row"
             data-row-id={row.id}
             aria-label={row.title || UNTITLED}
-            className="group/row hover:bg-hover/50 relative grid h-[33px] border-b text-[14px]"
+            className="group/row hover:bg-hover/50 relative grid min-h-[33px] border-b text-[14px]"
             style={{ gridTemplateColumns: columns }}
           >
             <div role="cell" className="relative border-r">

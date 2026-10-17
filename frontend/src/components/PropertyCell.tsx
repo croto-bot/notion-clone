@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import type { ClassValue } from 'clsx'
 import { Check, MoreHorizontal, Plus, Trash2 } from 'lucide-react'
 import { Avatar } from '@/components/Avatar'
 import { OptionChip } from '@/components/OptionChip'
@@ -25,12 +26,14 @@ import type { DatabaseProperty, DateValue, PropertyValue, SelectOption } from '@
 
 type Variant = 'cell' | 'panel'
 
-function cellBox(variant: Variant, className?: string) {
+/**
+ * The box of one value. Table cells keep Notion's 33 px minimum and grow with
+ * wrapped content (multi-select chips, people); panel lines hug their row.
+ */
+function cellBox(variant: Variant, ...className: ClassValue[]) {
   return cn(
     'flex w-full px-2 text-left text-[14px] leading-[20px]',
-    variant === 'panel'
-      ? 'min-h-[32px] items-start py-1.5'
-      : 'h-[33px] items-center overflow-hidden',
+    variant === 'panel' ? 'min-h-[32px] items-start py-1.5' : 'min-h-[33px] items-center py-[6px]',
     className
   )
 }
@@ -99,10 +102,8 @@ function InlineInputCell({ property, value, variant, editable, commit }: EditorP
       }}
       className={cellBox(
         variant,
-        cn(
-          'cursor-text disabled:cursor-default',
-          variant === 'panel' && 'rounded-[4px] hover:bg-hover'
-        )
+        'cursor-text disabled:cursor-default',
+        variant === 'panel' && 'rounded-[4px] hover:bg-hover'
       )}
     >
       {text ? (
@@ -124,7 +125,9 @@ function InlineInputCell({ property, value, variant, editable, commit }: EditorP
 function CheckboxCell({ property, value, variant, editable, commit }: EditorProps) {
   const checked = toBool(value)
   return (
-    <div className={cellBox(variant)}>
+    // In the panel the checkbox lines up with the 34 px label row, centered
+    // like Notion's row properties; the table centers it in the cell already.
+    <div className={cellBox(variant, variant === 'panel' && 'min-h-[34px] items-center py-0')}>
       <button
         type="button"
         role="checkbox"
@@ -342,7 +345,8 @@ function SelectCell({ property, value, variant, editable, commit, row }: EditorP
           aria-label={`${property.name} of ${row.title || 'Untitled'}`}
           className={cellBox(
             variant,
-            cn('cursor-pointer', variant === 'panel' && 'rounded-[4px] hover:bg-hover')
+            'cursor-pointer',
+            variant === 'panel' && 'rounded-[4px] hover:bg-hover'
           )}
         >
           {isEmptyValue(property, value) && variant === 'panel' ? (
@@ -395,7 +399,8 @@ function DateCell({ property, value, variant, editable, commit, row }: EditorPro
           aria-label={`${property.name} of ${row.title || 'Untitled'}`}
           className={cellBox(
             variant,
-            cn('cursor-pointer', variant === 'panel' && 'rounded-[4px] hover:bg-hover')
+            'cursor-pointer',
+            variant === 'panel' && 'rounded-[4px] hover:bg-hover'
           )}
         >
           {date ? show : variant === 'panel' ? <span className="text-subtle">Empty</span> : null}
@@ -466,7 +471,8 @@ function PersonCell({ property, value, variant, editable, commit, row }: EditorP
           aria-label={`${property.name} of ${row.title || 'Untitled'}`}
           className={cellBox(
             variant,
-            cn('cursor-pointer', variant === 'panel' && 'rounded-[4px] hover:bg-hover')
+            'cursor-pointer',
+            variant === 'panel' && 'rounded-[4px] hover:bg-hover'
           )}
         >
           {ids.length === 0 && variant === 'panel' ? (

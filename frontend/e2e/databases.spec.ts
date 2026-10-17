@@ -452,3 +452,104 @@ test.describe('databases: page options and table layout (fix round 1)', () => {
     await expect(page.getByRole('menuitemcheckbox', { name: 'Full width' })).toBeVisible()
   })
 })
+
+test.describe('databases: table rows that grow (fix round 1)', () => {
+  test('table rows grow around wrapped cells and cut nothing off', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Grown rows',
+    })
+    const tags: DatabaseProperty = {
+      id: 'tags-col',
+      name: 'Tags',
+      type: 'multi_select',
+      options: [
+        { id: 'alpha', name: 'Alpha', color: 'blue' },
+        { id: 'beta', name: 'Beta', color: 'green' },
+        { id: 'gamma', name: 'Gamma', color: 'orange' },
+        { id: 'delta', name: 'Delta', color: 'pink' },
+      ],
+    }
+    const shipped: DatabaseProperty = { id: 'shipped-col', name: 'Shipped', type: 'checkbox' }
+    await updatePage(api, user, database.id, {
+      database_schema: [...(database.database_schema ?? []), tags, shipped],
+    })
+    await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: 'Wrapped row',
+      properties: {
+        [tags.id]: ['alpha', 'beta', 'gamma', 'delta'],
+        [shipped.id]: true,
+      },
+    })
+
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(`/p/${database.id}`)
+    const row = page.getByRole('row', { name: 'Wrapped row' })
+    await expect(row).toBeVisible()
+
+    const rowBox = await row.boundingBox()
+    const headerBox = await page.getByRole('columnheader', { name: 'Name' }).boundingBox()
+    expect(headerBox).toBeTruthy()
+    expect(rowBox!.height).toBeGreaterThan(33)
+    expect(rowBox!.height).toBeGreaterThan(headerBox!.height)
+    for (const name of ['Alpha', 'Beta', 'Gamma', 'Delta']) {
+      const chip = row.getByText(name, { exact: true })
+      await expect(chip).toBeVisible()
+      const chipBox = await chip.boundingBox()
+      expect(chipBox, name).toBeTruthy()
+      // The row's bottom border sits below every chip: nothing is cut off.
+      expect(chipBox!.y + chipBox!.height, `${name} must end inside the row`).toBeLessThanOrEqual(
+        rowBox!.y + rowBox!.height + 0.5
+      )
+    }
+  })
+
+  test('centers the checkbox in the row-properties panel', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Panel db',
+    })
+    const shipped: DatabaseProperty = { id: 'shipped-col', name: 'Shipped', type: 'checkbox' }
+    await updatePage(api, user, database.id, {
+      database_schema: [...(database.database_schema ?? []), shipped],
+    })
+    const rowPage = await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: 'Checked row',
+      properties: { [shipped.id]: true },
+    })
+
+    // Open the database first: the row page needs the tree and the database
+    // row before it can render its property panel, and both are warm then.
+    await page.goto(`/p/${database.id}`)
+    await expect(page.getByRole('row', { name: 'Checked row' })).toBeVisible()
+    await page.goto(`/p/${rowPage.id}`)
+    const panel = page.getByTestId('row-properties')
+    await expect(panel).toBeVisible()
+
+    const checkbox = page.getByRole('checkbox', { name: 'Shipped' })
+    await expect(checkbox).toBeVisible()
+    const checkboxBox = await checkbox.boundingBox()
+    const labelBox = await panel.getByText('Shipped', { exact: true }).boundingBox()
+    expect(checkboxBox).toBeTruthy()
+    expect(labelBox).toBeTruthy()
+    const checkboxCenter = checkboxBox!.y + checkboxBox!.height / 2
+    const labelCenter = labelBox!.y + labelBox!.height / 2
+    expect(Math.abs(checkboxCenter - labelCenter)).toBeLessThanOrEqual(2)
+  })
+})
