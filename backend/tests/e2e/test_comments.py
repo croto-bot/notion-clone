@@ -185,3 +185,30 @@ def test_body_limits(auth_client: httpx.Client) -> None:
     assert empty.status_code == 422
     huge = auth_client.post(f"/pages/{page['id']}/comments", json={"body": "x" * 10001})
     assert huge.status_code == 422
+
+
+def test_reply_parent_must_belong_to_the_same_page(
+    auth_client: httpx.Client,
+) -> None:
+    """A reply's parent_id must be a comment of the very same page.
+
+    Review finding 12: the parent comment was never checked, so a member who
+    knew a comment id from another workspace could graft a reply onto it
+    (and deleting the foreign comment cascade-deleted the reply).
+    """
+    home = create_workspace(auth_client)
+    home_page = create_page(auth_client, home["id"])
+    foreign = create_workspace(auth_client)
+    foreign_page = create_page(auth_client, foreign["id"])
+    foreign_comment = auth_client.post(
+        f"/pages/{foreign_page['id']}/comments", json={"body": "Elsewhere"}
+    ).json()
+
+    response = auth_client.post(
+        f"/pages/{home_page['id']}/comments",
+        json={"body": "A reply", "parent_id": foreign_comment["id"]},
+    )
+
+    assert_error(response, 404, "not_found")
+    listed = auth_client.get(f"/pages/{home_page['id']}/comments").json()
+    assert [comment["body"] for comment in listed] == []

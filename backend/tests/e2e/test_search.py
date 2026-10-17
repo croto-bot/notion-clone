@@ -94,3 +94,35 @@ def test_search_excludes_trashed_pages(auth_client: httpx.Client) -> None:
     ).json()
 
     assert results == []
+
+
+def test_search_children_and_breadcrumbs_from_one_workspace_pass(
+    auth_client: httpx.Client,
+) -> None:
+    """Search builds breadcrumbs and has_children from one workspace read.
+
+    Review finding 10: each hit used to walk its parents one query at a time
+    and count children with another (up to a hundred queries per keystroke).
+    The results must stay the same, and has_children must not count a child
+    that sits in the trash (the sidebar has no expander for it).
+    """
+    workspace = create_workspace(auth_client)
+    root = create_page(auth_client, workspace["id"], title="Root")
+    middle = create_page(
+        auth_client, workspace["id"], parent_id=root["id"], title="Mid"
+    )
+    leaf = create_page(
+        auth_client, workspace["id"], parent_id=middle["id"], title="Leaf Zephyr"
+    )
+    trashed_child = create_page(
+        auth_client, workspace["id"], parent_id=leaf["id"], title="Parked"
+    )
+    assert auth_client.delete(f"/pages/{trashed_child['id']}").status_code == 204
+
+    results = auth_client.get(
+        f"/workspaces/{workspace['id']}/search", params={"q": "zephyr"}
+    ).json()
+
+    assert [hit["id"] for hit in results] == [leaf["id"]]
+    assert [b["title"] for b in results[0]["breadcrumbs"]] == ["Root", "Mid"]
+    assert results[0]["has_children"] is False

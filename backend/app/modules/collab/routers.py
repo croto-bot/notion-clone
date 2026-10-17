@@ -15,6 +15,7 @@ from app.core.websockets import (
 from app.dependencies import get_db_session
 from app.modules.collab.channels import (
     Channel,
+    GuardedChannel,
     ReadOnlyChannel,
     StarletteChannel,
     WriteTrackingChannel,
@@ -69,14 +70,19 @@ async def collab_socket(
     await websocket.accept()
     # Logged at accept: the connection succeeded, however long it stays open.
     log_socket(PATH_TEMPLATE, path, 200)
-    room = await collab_server.get_room(page_id, page.ydoc_state)
+    room = await collab_server.get_room(page_id)
     base = StarletteChannel(websocket, str(page_id))
     channel: Channel  # noqa: F821  (TYPE_CHECKING import; runtime is a channel wrapper)
     if read_only:
         channel = ReadOnlyChannel(base)
     else:
+        # Write access is re-checked on every push: trash or a demotion that
+        # happens after connect takes effect from the next message on. The
+        # guard sits inside the tracker, so a dropped push never credits its
+        # sender as the page's last editor.
         channel = WriteTrackingChannel(
-            base, lambda: collab_server.note_write(page_id, user.id)
+            GuardedChannel(base, lambda: collab_server.may_write(page_id, user.id)),
+            lambda: collab_server.note_write(page_id, user.id),
         )
 
     try:

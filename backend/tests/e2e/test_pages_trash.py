@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from tests.e2e.helpers import assert_error, create_page, create_workspace
+from tests.e2e.helpers import (
+    assert_error,
+    create_page,
+    create_workspace,
+    make_member,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -137,8 +142,6 @@ def test_purge_only_trashed_pages(auth_client: httpx.Client) -> None:
 def test_viewer_cannot_trash_or_restore(
     auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
 ) -> None:
-    from tests.e2e.helpers import make_member
-
     workspace = create_workspace(auth_client)
     viewer = make_member(register_user, auth_client, workspace["id"], role="viewer")
     page = create_page(auth_client, workspace["id"])
@@ -146,3 +149,196 @@ def test_viewer_cannot_trash_or_restore(
     assert_error(viewer.client.delete(f"/pages/{page['id']}"), 403, "forbidden")
     auth_client.delete(f"/pages/{page['id']}")
     assert_error(viewer.client.post(f"/pages/{page['id']}/restore"), 403, "forbidden")
+
+
+# --- a separate trash item inside a trashed tree (review finding 3) --------------
+
+
+def _nested_with_trashed_child(auth_client: httpx.Client) -> dict[str, Any]:
+    """Parent -> Child -> Grandchild, with Child trashed before Parent."""
+    workspace = create_workspace(auth_client)
+    parent = create_page(auth_client, workspace["id"], title="Parent")
+    child = create_page(
+        auth_client, workspace["id"], parent_id=parent["id"], title="Child"
+    )
+    grandchild = create_page(
+        auth_client, workspace["id"], parent_id=child["id"], title="Grandchild"
+    )
+    assert auth_client.delete(f"/pages/{child['id']}").status_code == 204
+    assert auth_client.delete(f"/pages/{parent['id']}").status_code == 204
+    return {
+        "workspace": workspace,
+        "parent": parent,
+        "child": child,
+        "grandchild": grandchild,
+    }
+
+
+def test_restore_keeps_a_separately_trashed_child_in_trash(
+    auth_client: httpx.Client,
+) -> None:
+    """Restoring the parent must not restore a child with its own trash item.
+
+    The child (and its own subtree) was trashed before the parent, so it keeps
+    its trash entry; only the pages trashed by the parent's delete come back.
+    """
+    pages = _nested_with_trashed_child(auth_client)
+    workspace, parent, child, grandchild = (
+        pages["workspace"],
+        pages["parent"],
+        pages["child"],
+        pages["grandchild"],
+    )
+
+    response = auth_client.post(f"/pages/{parent['id']}/restore")
+
+    assert response.status_code == 200
+    assert response.json()["deleted_at"] is None
+    assert auth_client.get(f"/pages/{child['id']}").json()["deleted_at"] is not None
+    assert (
+        auth_client.get(f"/pages/{grandchild['id']}").json()["deleted_at"] is not None
+    )
+    tree = auth_client.get(f"/workspaces/{workspace['id']}/page-tree").json()
+    assert [page["title"] for page in tree] == ["Parent"]
+    trash = auth_client.get(f"/workspaces/{workspace['id']}/trash").json()
+    assert [page["title"] for page in trash] == ["Child"]
+
+
+def test_purge_keeps_a_separately_trashed_child(
+    auth_client: httpx.Client, db: Database
+) -> None:
+    """Purging the parent must not forever delete a child with its own trash item.
+
+    The child's trash entry is independent: it survives the purge, moved to
+    the workspace root and still trashed.
+    """
+    pages = _nested_with_trashed_child(auth_client)
+    workspace, parent, child, grandchild = (
+        pages["workspace"],
+        pages["parent"],
+        pages["child"],
+        pages["grandchild"],
+    )
+
+    response = auth_client.delete(f"/pages/{parent['id']}/permanent")
+
+    assert response.status_code == 204
+    assert_error(auth_client.get(f"/pages/{parent['id']}"), 404, "not_found")
+    child_now = auth_client.get(f"/pages/{child['id']}").json()
+    assert child_now["deleted_at"] is not None
+    assert child_now["parent_id"] is None
+    assert (
+        auth_client.get(f"/pages/{grandchild['id']}").json()["deleted_at"] is not None
+    )
+    assert (
+        auth_client.get(f"/pages/{grandchild['id']}").json()["parent_id"] == child["id"]
+    )
+    trash = auth_client.get(f"/workspaces/{workspace['id']}/trash").json()
+    assert [page["title"] for page in trash] == ["Child"]
+    assert db.fetch_one("SELECT count(*) FROM pages")[0] == 2
+
+
+def test_purge_keeps_nested_trash_roots_hierarchy(
+    auth_client: httpx.Client,
+) -> None:
+    """Purging the outer page keeps nested trash roots' hierarchy.
+
+    G was trashed under C before C was trashed, and C under P before P, so
+    both keep their own trash entries. The purge of P must move only C (its
+    parent is being deleted) to the workspace root; G stays under C with
+    its own subtree, still trashed, instead of being flattened to the root
+    like the old blanket detach did.
+    """
+    workspace = create_workspace(auth_client)
+    parent = create_page(auth_client, workspace["id"], title="P")
+    child = create_page(auth_client, workspace["id"], parent_id=parent["id"], title="C")
+    grandchild = create_page(
+        auth_client, workspace["id"], parent_id=child["id"], title="G"
+    )
+    great_grandchild = create_page(
+        auth_client, workspace["id"], parent_id=grandchild["id"], title="GG"
+    )
+    assert auth_client.delete(f"/pages/{grandchild['id']}").status_code == 204
+    assert auth_client.delete(f"/pages/{child['id']}").status_code == 204
+    assert auth_client.delete(f"/pages/{parent['id']}").status_code == 204
+
+    response = auth_client.delete(f"/pages/{parent['id']}/permanent")
+
+    assert response.status_code == 204
+    assert_error(auth_client.get(f"/pages/{parent['id']}"), 404, "not_found")
+    child_now = auth_client.get(f"/pages/{child['id']}").json()
+    grandchild_now = auth_client.get(f"/pages/{grandchild['id']}").json()
+    great_now = auth_client.get(f"/pages/{great_grandchild['id']}").json()
+    assert child_now["deleted_at"] is not None
+    assert child_now["parent_id"] is None  # C's parent was purged
+    assert grandchild_now["deleted_at"] is not None
+    assert grandchild_now["parent_id"] == child["id"]  # the hierarchy stays
+    assert great_now["deleted_at"] is not None
+    assert great_now["parent_id"] == grandchild["id"]
+
+
+def test_restore_keeps_its_position_when_the_slot_is_free(
+    auth_client: httpx.Client,
+) -> None:
+    """Restore puts the page back at its old key when no live sibling took it.
+
+    Re-keying every restore shoves the page to the end of its siblings even
+    when its key is still free. The old key is tried first. A new key is
+    allocated only when that key is taken.
+    """
+    workspace = create_workspace(auth_client)
+    create_page(auth_client, workspace["id"], title="S1")
+    page = create_page(auth_client, workspace["id"], title="P")
+    create_page(auth_client, workspace["id"], title="S2")
+    assert auth_client.delete(f"/pages/{page['id']}").status_code == 204
+
+    response = auth_client.post(f"/pages/{page['id']}/restore")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["position"] == page["position"]
+    tree = auth_client.get(f"/workspaces/{workspace['id']}/page-tree").json()
+    assert [item["title"] for item in tree] == ["S1", "P", "S2"]
+
+
+def test_restore_re_keys_when_a_live_sibling_took_the_position(
+    auth_client: httpx.Client,
+) -> None:
+    """A restore must never collide with a sibling that reused its key.
+
+    While the page sat in the trash its position key was free: a new sibling
+    (or a duplicate) could take it. Restoring the old row as-is would hit
+    the unique live-sibling index and 500 with the page stuck in the trash;
+    the restore must allocate a fresh key among the current live siblings.
+    """
+    workspace = create_workspace(auth_client)
+    parent = create_page(auth_client, workspace["id"], title="Parent")
+    c1 = create_page(auth_client, workspace["id"], parent_id=parent["id"], title="C1")
+    assert auth_client.delete(f"pages/{c1['id']}").status_code == 204
+    # C1's key is free while it is trashed: C2 takes it.
+    c2 = create_page(auth_client, workspace["id"], parent_id=parent["id"], title="C2")
+    assert c2["position"] == c1["position"]
+
+    response = auth_client.post(f"pages/{c1['id']}/restore")
+
+    assert response.status_code == 200, response.text
+    restored = response.json()
+    assert restored["deleted_at"] is None
+    assert restored["parent_id"] == parent["id"]
+    assert restored["position"] != c2["position"]
+    tree = auth_client.get(f"/workspaces/{workspace['id']}/page-tree").json()
+    assert [page["title"] for page in tree] == ["Parent", "C2", "C1"]
+
+
+def test_viewer_cannot_purge_pages(
+    auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
+) -> None:
+    """Review finding 13: the viewer-write paths need their own tests."""
+    workspace = create_workspace(auth_client)
+    viewer = make_member(register_user, auth_client, workspace["id"], role="viewer")
+    page = create_page(auth_client, workspace["id"])
+    auth_client.delete(f"/pages/{page['id']}")
+
+    response = viewer.client.delete(f"/pages/{page['id']}/permanent")
+
+    assert_error(response, 403, "forbidden")
+    assert auth_client.get(f"/pages/{page['id']}").json()["deleted_at"] is not None

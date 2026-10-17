@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from tests.e2e.helpers import create_page, create_workspace, make_member
+from tests.e2e.helpers import assert_error, create_page, create_workspace, make_member
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -79,3 +79,35 @@ def test_trashed_pages_leave_the_favorites_list(auth_client: httpx.Client) -> No
     auth_client.delete(f"/pages/{page['id']}")
 
     assert auth_client.get(f"/workspaces/{workspace['id']}/favorites").json() == []
+
+
+# --- roles (review finding 7) ----------------------------------------------------
+
+
+def test_viewer_cannot_favorite(
+    auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
+) -> None:
+    """The spec's viewer contract: 403 forbidden on every write but comments."""
+    workspace = create_workspace(auth_client)
+    viewer = make_member(register_user, auth_client, workspace["id"], role="viewer")
+    page = create_page(auth_client, workspace["id"])
+
+    assert_error(viewer.client.put(f"/pages/{page['id']}/favorite"), 403, "forbidden")
+    assert auth_client.get(f"/workspaces/{workspace['id']}/favorites").json() == []
+
+
+def test_viewer_cannot_unfavorite(
+    auth_client: httpx.Client, register_user: Callable[..., RegisteredUser]
+) -> None:
+    """Removing a favorite is a write too: a viewer gets 403."""
+    workspace = create_workspace(auth_client)
+    viewer = make_member(register_user, auth_client, workspace["id"], role="viewer")
+    page = create_page(auth_client, workspace["id"])
+    assert auth_client.put(f"/pages/{page['id']}/favorite").status_code == 204
+
+    assert_error(
+        viewer.client.delete(f"/pages/{page['id']}/favorite"), 403, "forbidden"
+    )
+
+    favorites = auth_client.get(f"/workspaces/{workspace['id']}/favorites").json()
+    assert [p["id"] for p in favorites] == [page["id"]]

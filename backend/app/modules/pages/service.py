@@ -24,6 +24,8 @@ from app.repositories.exceptions import NotFoundError
 from app.services.base_crud_service import BaseService
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from app.modules.collab.server import CollabServer
     from app.modules.events.bus import WorkspaceEventBus
     from app.modules.pages.repository import (
@@ -172,19 +174,44 @@ class PageService(BaseService[Page]):
 
     # --- helpers ----------------------------------------------------------------
 
-    async def _breadcrumbs(self, page: Page) -> list[Breadcrumb]:
-        chain: list[Breadcrumb] = []
-        current = page
-        depth = 0
-        while current.parent_id is not None and depth < 100:
-            parent = await self.repo.get(current.parent_id, raise_error=False)
+    async def _ancestor_chain(
+        self,
+        start_id: uuid.UUID | None,
+        load: Callable[[uuid.UUID], Awaitable[Page | None]],
+    ) -> list[Page]:
+        """A page's parents, nearest first, through one shared walker.
+
+        The visited set stops the walk when the rows contain a parent cycle,
+        so one already-corrupt row yields each parent once, not an endless chain.
+        """
+        chain: list[Page] = []
+        seen: set[uuid.UUID] = set()
+        current_id = start_id
+        while current_id is not None and current_id not in seen:
+            seen.add(current_id)
+            parent = await load(current_id)
             if parent is None:
                 break
-            chain.append(Breadcrumb(id=parent.id, title=parent.title, icon=parent.icon))
-            current = parent
-            depth += 1
-        chain.reverse()
+            chain.append(parent)
+            current_id = parent.parent_id
         return chain
+
+    async def _breadcrumbs(self, page: Page) -> list[Breadcrumb]:
+        """The parent chain, root first, from one ordered query and one get_many.
+
+        The ancestor query returns the parents nearest first and stops on a
+        parent cycle. Nothing here reads ``page.parent_id``, so a stale page
+        object cannot reorder or truncate the chain.
+        """
+        ancestor_ids = await self.repo.ancestor_ids(page.id)
+        if not ancestor_ids:
+            return []
+        nodes = {node.id: node for node in await self.repo.get_many(ancestor_ids)}
+        chain = [nodes[node_id] for node_id in reversed(ancestor_ids)]
+        return [
+            Breadcrumb(id=parent.id, title=parent.title, icon=parent.icon)
+            for parent in chain
+        ]
 
     async def _has_children(self, page_id: uuid.UUID) -> bool:
         return await self.repo.has_child(page_id)
@@ -217,15 +244,21 @@ class PageService(BaseService[Page]):
     def _breadth_first(
         nodes: dict[uuid.UUID, Page], root_id: uuid.UUID
     ) -> list[uuid.UUID]:
-        """Parents before children, so one INSERT satisfies the self-FK."""
+        """Parents before children, so one INSERT satisfies the self-FK.
+
+        The visited set stops the walk when the rows contain a parent cycle:
+        each node is emitted once, however the parent edges loop.
+        """
         order: list[uuid.UUID] = []
         queue = [root_id]
+        seen = {root_id}
         while queue:
             current = queue.pop(0)
             order.append(current)
-            queue.extend(
-                node_id for node_id, node in nodes.items() if node.parent_id == current
-            )
+            for node_id, node in nodes.items():
+                if node.parent_id == current and node_id not in seen:
+                    seen.add(node_id)
+                    queue.append(node_id)
         return order
 
     @staticmethod
@@ -240,8 +273,25 @@ class PageService(BaseService[Page]):
         ``after_id`` set: right after that sibling. ``after_id`` explicitly
         null: first. ``after_id`` omitted: last (SPEC: "Without after_id the
         page goes last"; an explicit null is "first", like Notion's drop on
-        top).
+        top). Sibling keys the indexer cannot order (a lost position race
+        left rows, or a corrupted row) are a client-visible 400, not a 500.
         """
+        try:
+            return PageService._position_between(
+                siblings, after_id, after_id_sent=after_id_sent
+            )
+        except ValueError as exc:
+            raise InvalidMoveError(
+                detail="The sibling order keys leave no valid position"
+            ) from exc
+
+    @staticmethod
+    def _position_between(
+        siblings: list[Page],
+        after_id: uuid.UUID | None,
+        *,
+        after_id_sent: bool,
+    ) -> str:
         if after_id is not None:
             after_index = next(
                 (i for i, page in enumerate(siblings) if page.id == after_id), None
@@ -263,14 +313,69 @@ class PageService(BaseService[Page]):
         last = siblings[-1] if siblings else None
         return generate_key_between(last.position if last else None, None)
 
+    async def _lock_page(
+        self, page_id: uuid.UUID, user_id: uuid.UUID
+    ) -> tuple[Page, WorkspaceMember]:
+        """Take the workspace tree lock, then re-read the page and the role.
+
+        The read that learns the workspace id is not a decision. Checks use
+        the rows loaded after the lock, in this same transaction.
+        """
+        current = await self.repo.get(page_id, raise_error=False)
+        if current is None:
+            raise NotFoundError(detail=f"Page {page_id} not found")
+        await self.repo.lock_workspace_tree(current.workspace_id)
+        page = await self.repo.fresh(page_id)
+        if page is None:
+            raise NotFoundError(detail=f"Page {page_id} not found")
+        member = await self.member_repo.get_membership(page.workspace_id, user_id)
+        if member is None:
+            raise NotFoundError(detail=f"Page {page_id} not found")
+        return page, member
+
+    async def _sibling_position(
+        self,
+        workspace_id: uuid.UUID,
+        parent_id: uuid.UUID | None,
+        after_id: uuid.UUID | None,
+        *,
+        after_id_sent: bool,
+        exclude_id: uuid.UUID | None = None,
+    ) -> str:
+        siblings = await self.repo.siblings(workspace_id, parent_id)
+        if exclude_id is not None:
+            siblings = [sibling for sibling in siblings if sibling.id != exclude_id]
+        return self._position_after(siblings, after_id, after_id_sent=after_id_sent)
+
     async def _visible_parent_or_404(
         self, workspace_id: uuid.UUID, parent_id: uuid.UUID | None
     ) -> Page | None:
-        """The parent for a create/move: same workspace, not trashed, or 404."""
+        """The parent for a create: same workspace, not trashed, or 404."""
         if parent_id is None:
             return None
-        parent = await self.repo.get(parent_id, raise_error=False)
+        parent = await self.repo.fresh(parent_id)
         if parent is None or parent.workspace_id != workspace_id:
+            raise NotFoundError(detail=f"Page {parent_id} not found")
+        return parent
+
+    async def _move_parent_or_error(
+        self, page: Page, parent_id: uuid.UUID, user_id: uuid.UUID
+    ) -> Page:
+        """The move's parent, with the move-specific cross-workspace error.
+
+        A create under a foreign parent is a plain 404 (SPEC), but a move
+        under a page of another workspace the user can see is 400
+        invalid_move: the page exists, the tree just cannot reach it.
+        """
+        parent = await self.repo.fresh(parent_id)
+        if parent is None:
+            raise NotFoundError(detail=f"Page {parent_id} not found")
+        if parent.workspace_id != page.workspace_id:
+            member = await self.member_repo.get_membership(parent.workspace_id, user_id)
+            if member is not None:
+                raise InvalidMoveError(
+                    detail="A page cannot move under a page of another workspace"
+                )
             raise NotFoundError(detail=f"Page {parent_id} not found")
         return parent
 
@@ -279,6 +384,7 @@ class PageService(BaseService[Page]):
     async def create_page(
         self, payload: PageCreate, *, user_id: uuid.UUID
     ) -> PageDetail:
+        await self.repo.lock_workspace_tree(payload.workspace_id)
         member = await self.member_repo.get_membership(payload.workspace_id, user_id)
         if member is None:
             raise NotFoundError(detail=f"Workspace {payload.workspace_id} not found")
@@ -289,23 +395,21 @@ class PageService(BaseService[Page]):
         if parent is not None and parent.deleted_at is not None:
             raise NotFoundError(detail=f"Page {parent.id} not found")
 
-        siblings = await self.repo.siblings(payload.workspace_id, payload.parent_id)
-        position = self._position_after(
-            siblings,
-            payload.after_id,
-            after_id_sent="after_id" in payload.model_fields_set,
-        )
-
         values: dict[str, Any] = {
             "workspace_id": payload.workspace_id,
             "parent_id": payload.parent_id,
             "kind": payload.kind,
             "title": payload.title,
             "icon": payload.icon,
-            "position": position,
             "created_by_id": user_id,
             "last_edited_by_id": user_id,
             "properties": payload.properties or {},
+            "position": await self._sibling_position(
+                payload.workspace_id,
+                payload.parent_id,
+                payload.after_id,
+                after_id_sent="after_id" in payload.model_fields_set,
+            ),
         }
         if payload.kind == PageKind.DATABASE:
             values["database_schema"] = _default_database_schema()
@@ -357,52 +461,60 @@ class PageService(BaseService[Page]):
         user_id: uuid.UUID,
         after_id_sent: bool = True,
     ) -> PageDetail:
-        page, member = await self._access(page_id, user_id)
+        """Move (and reorder) a page under the workspace tree lock."""
+        page, member = await self._lock_page(page_id, user_id)
         self._require_editor(member)
         if page.deleted_at is not None:
             raise PageInTrashError()
         if parent_id == page_id:
             raise InvalidMoveError()
         if parent_id is not None:
-            subtree = await self.repo.subtree_ids(page_id)
-            if parent_id in subtree:
+            parent = await self._move_parent_or_error(page, parent_id, user_id)
+            if parent.deleted_at is not None:
+                raise InvalidMoveError(
+                    detail="A page cannot move into a page that is in the trash"
+                )
+            if parent_id in await self.repo.subtree_ids(page_id):
                 raise InvalidMoveError()
-        parent = await self._visible_parent_or_404(page.workspace_id, parent_id)
-        if parent is not None and parent.deleted_at is not None:
-            raise InvalidMoveError(
-                detail="A page cannot move into a page that is in the trash"
-            )
-
-        siblings = [
-            sibling
-            for sibling in await self.repo.siblings(page.workspace_id, parent_id)
-            if sibling.id != page_id
-        ]
-        position = self._position_after(siblings, after_id, after_id_sent=after_id_sent)
-        updated = await self.repo.update(
+        position = await self._sibling_position(
+            page.workspace_id,
+            parent_id,
+            after_id,
+            after_id_sent=after_id_sent,
+            exclude_id=page_id,
+        )
+        moved = await self.repo.update(
             page_id, {"parent_id": parent_id, "position": position}
         )
         self._log_entity(page_id)
         self._publish(
-            page.workspace_id, "page.moved", actor_id=user_id, page_id=page_id
+            moved.workspace_id, "page.moved", actor_id=user_id, page_id=page_id
         )
-        return await self._detail(updated, member)
+        return await self._detail(moved, member)
 
     async def duplicate_page(
         self, page_id: uuid.UUID, *, user_id: uuid.UUID
     ) -> PageDetail:
-        page, member = await self._access(page_id, user_id)
+        page, member = await self._lock_page(page_id, user_id)
         self._require_editor(member)
         if page.deleted_at is not None:
             raise PageInTrashError()
 
         subtree_ids = await self.repo.subtree_ids(page_id)
         nodes = {node.id: node for node in await self.repo.get_many(subtree_ids)}
+        # Trashed descendants (and their subtrees) are skipped: the copy must
+        # not resurrect deleted content (review finding 4).
+        nodes = {
+            node_id: node for node_id, node in nodes.items() if node.deleted_at is None
+        }
+        position = await self._sibling_position(
+            page.workspace_id,
+            page.parent_id,
+            page_id,
+            after_id_sent=True,  # right after the source, among its siblings
+        )
 
-        siblings = await self.repo.siblings(page.workspace_id, page.parent_id)
-        copy_position = self._position_after(siblings, page_id, after_id_sent=True)
-
-        id_map = {old_id: uuid.uuid4() for old_id in subtree_ids}
+        id_map = {old_id: uuid.uuid4() for old_id in nodes}
         rows: list[dict[str, Any]] = []
         for old_id in self._breadth_first(nodes, page_id):
             node = nodes[old_id]
@@ -419,7 +531,7 @@ class PageService(BaseService[Page]):
                     "icon": node.icon,
                     "cover": node.cover,
                     "cover_position": node.cover_position,
-                    "position": copy_position if is_root_copy else node.position,
+                    "position": position if is_root_copy else node.position,
                     "full_width": node.full_width,
                     "small_text": node.small_text,
                     "locked": node.locked,
@@ -436,18 +548,18 @@ class PageService(BaseService[Page]):
                 }
             )
         created = await self.repo.insert_tree(rows)
-        copy = next(node for node in created if node.id == id_map[page_id])
-        for node in created:
-            self._log_entity(node.id)
+        copy = next(row for row in created if row.id == id_map[page_id])
+        for node_id in id_map.values():
+            self._log_entity(node_id)
         self._publish(
-            page.workspace_id, "page.created", actor_id=user_id, page_id=copy.id
+            copy.workspace_id, "page.created", actor_id=user_id, page_id=copy.id
         )
         return await self._detail(copy, member)
 
     # --- trash ---------------------------------------------------------------------
 
     async def trash_page(self, page_id: uuid.UUID, *, user_id: uuid.UUID) -> None:
-        page, member = await self._access(page_id, user_id)
+        page, member = await self._lock_page(page_id, user_id)
         self._require_editor(member)
         subtree = await self.repo.subtree_ids(page_id)
         await self.repo.mark_trashed(subtree, page_id, datetime.now(tz=UTC))
@@ -456,39 +568,69 @@ class PageService(BaseService[Page]):
             page.workspace_id, "page.deleted", actor_id=user_id, page_id=page_id
         )
 
+    async def _own_trash_ids(
+        self, root_id: uuid.UUID, subtree: list[uuid.UUID]
+    ) -> list[uuid.UUID]:
+        """The subtree minus independent trash roots and their subtrees.
+
+        A descendant that was already in the trash when this root was deleted
+        kept its own trash item (``deleted_root`` stays true). Restoring or
+        purging the root must not touch those: they keep their trash entry.
+        """
+        nodes = {node.id: node for node in await self.repo.get_many(subtree)}
+        excluded: set[uuid.UUID] = set()
+        for node_id in subtree:
+            if node_id != root_id and nodes[node_id].deleted_root:
+                excluded.update(await self.repo.subtree_ids(node_id))
+        return [node_id for node_id in subtree if node_id not in excluded]
+
     async def restore_page(
         self, page_id: uuid.UUID, *, user_id: uuid.UUID
     ) -> PageDetail:
-        page, member = await self._access(page_id, user_id)
+        page, member = await self._lock_page(page_id, user_id)
         self._require_editor(member)
         if page.deleted_at is None:
             raise NotInTrashError()
         subtree = await self.repo.subtree_ids(page_id)
-        await self.repo.restore_trashed(subtree)
-
-        parent = await self.repo.get(page.parent_id, raise_error=False)
-        if parent is None or parent.deleted_at is not None:
-            siblings = await self.repo.siblings(page.workspace_id, None)
-            position = generate_key_between(
-                siblings[-1].position if siblings else None, None
-            )
-            page = await self.repo.update(
-                page_id, {"parent_id": None, "position": position}
-            )
+        own_ids = await self._own_trash_ids(page_id, subtree)
+        # Keep the parent when it is live again, else return to the root.
+        # The old key is tried first. A sibling that took it while this page
+        # sat in the trash forces a new key (last). The unique index would
+        # otherwise reject the old key.
+        parent = (
+            await self.repo.fresh(page.parent_id)
+            if page.parent_id is not None
+            else None
+        )
+        to_root = parent is None or parent.deleted_at is not None
+        target_parent = None if to_root else page.parent_id
+        siblings = await self.repo.siblings(page.workspace_id, target_parent)
+        if any(sibling.position == page.position for sibling in siblings):
+            position = self._position_after(siblings, None, after_id_sent=False)
         else:
-            page = await self.repo.get(page_id)
+            position = page.position
+        restored = await self.repo.restore_at(
+            page_id,
+            parent_id=target_parent,
+            position=position,
+            clear_ids=[node_id for node_id in own_ids if node_id != page_id],
+        )
         self._log_entity(page_id)
         self._publish(
-            page.workspace_id, "page.restored", actor_id=user_id, page_id=page_id
+            restored.workspace_id, "page.restored", actor_id=user_id, page_id=page_id
         )
-        return await self._detail(page, member)
+        return await self._detail(restored, member)
 
     async def purge_page(self, page_id: uuid.UUID, *, user_id: uuid.UUID) -> None:
-        page, member = await self._access(page_id, user_id)
+        page, member = await self._lock_page(page_id, user_id)
         self._require_editor(member)
         if page.deleted_at is None:
             raise NotInTrashError()
-        await self.repo.delete(page_id)
+        subtree = await self.repo.subtree_ids(page_id)
+        # Own trash set, computed after the lock: the subtree minus independent
+        # trash roots inside it and their subtrees.
+        delete_ids = await self._own_trash_ids(page_id, subtree)
+        await self.repo.purge_subtree(page_id, delete_ids)
         self._log_entity(page_id)
         self._publish(
             page.workspace_id, "page.purged", actor_id=user_id, page_id=page_id
@@ -525,6 +667,20 @@ class PageService(BaseService[Page]):
     ) -> list[SearchEntry]:
         await self._require_member(workspace_id, user_id)
         pages = await self.repo.search_pages(workspace_id, query, limit)
+        if not pages:
+            return []
+        # Breadcrumbs and has_children come from one workspace read: walking
+        # each hit's parents query by query is a query storm per keystroke.
+        # Live pages only, because a live page never has a trashed ancestor
+        # (a restore reparents to the root when the parent stayed trashed).
+        live = {page.id: page for page in await self.repo.live_pages(workspace_id)}
+        parent_ids = {
+            page.parent_id for page in live.values() if page.parent_id is not None
+        }
+
+        async def _live_parent(parent_id: uuid.UUID) -> Page | None:
+            return live.get(parent_id)
+
         entries = []
         for page in pages:
             content = page.content_text or ""
@@ -532,23 +688,28 @@ class PageService(BaseService[Page]):
                 snippet = _snippet(page.title, query)
             else:
                 snippet = _snippet(content, query)
+            chain = await self._ancestor_chain(page.parent_id, _live_parent)
             entries.append(
                 SearchEntry(
                     page=page,
                     snippet=snippet,
-                    breadcrumbs=await self._breadcrumbs(page),
-                    has_children=await self._has_children(page.id),
+                    breadcrumbs=[
+                        Breadcrumb(id=parent.id, title=parent.title, icon=parent.icon)
+                        for parent in reversed(chain)
+                    ],
+                    has_children=page.id in parent_ids,
                 )
             )
         return entries
 
     async def database_rows(
         self, page_id: uuid.UUID, *, user_id: uuid.UUID
-    ) -> list[Page]:
-        page, _ = await self._access(page_id, user_id)
+    ) -> tuple[list[Page], WorkspaceRole]:
+        """A database's rows plus the caller's role (one membership read)."""
+        page, member = await self._access(page_id, user_id)
         if page.kind != PageKind.DATABASE:
             raise NotADatabaseError()
-        return await self.repo.database_rows(page_id)
+        return await self.repo.database_rows(page_id), member.role
 
     async def database_rows_of(self, page: Page) -> list[Page]:
         """Rows of a database page, without an access check (public pages)."""
@@ -557,12 +718,6 @@ class PageService(BaseService[Page]):
     async def detail_of(self, page: Page, member: WorkspaceMember) -> PageDetail:
         """Everything PageResponse adds around the row."""
         return await self._detail(page, member)
-
-    async def role_of_page(self, page: Page, user_id: uuid.UUID) -> WorkspaceRole:
-        member = await self.member_repo.get_membership(page.workspace_id, user_id)
-        if member is None:
-            raise NotFoundError(detail=f"Page {page.id} not found")
-        return member.role
 
     async def _require_member(
         self, workspace_id: uuid.UUID, user_id: uuid.UUID
@@ -575,7 +730,8 @@ class PageService(BaseService[Page]):
     # --- favorites ---------------------------------------------------------------------
 
     async def add_favorite(self, page_id: uuid.UUID, *, user_id: uuid.UUID) -> None:
-        page, _ = await self._access(page_id, user_id)
+        page, member = await self._access(page_id, user_id)
+        self._require_editor(member)
         if page.deleted_at is not None:
             raise PageInTrashError()
         if await self.favorite_repo.get_favorite(user_id, page_id) is not None:
@@ -590,7 +746,8 @@ class PageService(BaseService[Page]):
         )
 
     async def remove_favorite(self, page_id: uuid.UUID, *, user_id: uuid.UUID) -> None:
-        await self._access(page_id, user_id)
+        _page, member = await self._access(page_id, user_id)
+        self._require_editor(member)
         favorite = await self.favorite_repo.get_favorite(user_id, page_id)
         if favorite is not None:
             await self.favorite_repo.delete(favorite.id)
@@ -620,17 +777,26 @@ class PageService(BaseService[Page]):
         self._require_editor(member)
         if page.deleted_at is not None:
             raise PageInTrashError()
-        existing = await self.current_state(page_id)
-        merged = merge_updates(existing, state)
-        content_text = extract_text(merged)
-        await self.repo.set_document(
-            page_id,
-            ydoc_state=merged,
-            content_text=content_text,
-            last_edited_by_id=user_id,
-            last_edited_at=datetime.now(tz=UTC),
-        )
-        self.collab_server.apply_external_update(page_id, state)
+        # The same per-page lock as room creation and the flush: the merge
+        # reads, the write and the room update happen as one unit, so a
+        # concurrently connecting socket can never load the pre-PUT bytes.
+        async with self.collab_server.page_lock(page_id):
+            existing = await self.current_state(page_id)
+            merged = merge_updates(existing, state)
+            content_text = extract_text(merged)
+            updated = await self.repo.set_document(
+                page_id,
+                ydoc_state=merged,
+                content_text=content_text,
+                last_edited_by_id=user_id,
+                last_edited_at=datetime.now(tz=UTC),
+            )
+            if updated is None:
+                # The page was purged after the access read: report it, and
+                # do not push the write into the room of a deleted page.
+                raise NotFoundError(detail=f"Page {page_id} not found")
+            self.collab_server.note_write(page_id, user_id)
+            self.collab_server.apply_external_update(page_id, state)
         self._publish(
             page.workspace_id, "page.updated", actor_id=user_id, page_id=page_id
         )

@@ -2,8 +2,10 @@
 
 ``StarletteChannel`` adapts a Starlette/FastAPI ``WebSocket`` to pycrdt's
 ``Channel`` protocol (what ``YRoom.serve`` consumes). ``ReadOnlyChannel``
-drops a client's document (sync) messages while awareness keeps flowing, and
-``WriteTrackingChannel`` records who last sent a document update.
+drops a client's document (sync) messages while awareness keeps flowing,
+``WriteTrackingChannel`` records who last sent a document update, and
+``GuardedChannel`` re-checks write access before each document push a
+writable client sends.
 """
 
 from __future__ import annotations
@@ -11,11 +13,31 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 from anyio import Lock
-from pycrdt import YMessageType, YSyncMessageType
+from pycrdt import YMessageType, YSyncMessageType, read_message
 from starlette.websockets import WebSocketDisconnect
 
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
+
+# pycrdt ignores update payloads of exactly these bytes (an empty state
+# vector diff): such a push changes nothing, so it is not a document update.
+_EMPTY_UPDATE = b"\x00\x00"
+
+
+def _carries_update(message: bytes) -> bool:
+    """Whether this client message is a state push the server will apply.
+
+    Sync step 2 and update messages with a non-empty payload are document
+    updates; sync step 1 only asks for the document, and an empty payload
+    carries no changes (pycrdt skips it too)."""
+    if message[0] != int(YMessageType.SYNC):
+        return False
+    if message[1] not in (
+        int(YSyncMessageType.SYNC_STEP2),
+        int(YSyncMessageType.SYNC_UPDATE),
+    ):
+        return False
+    return read_message(message[2:]) != _EMPTY_UPDATE
 
 
 class Channel(Protocol):
@@ -95,7 +117,7 @@ class ReadOnlyChannel:
 
 
 class WriteTrackingChannel:
-    """Marks the page edited on every document message this client sends."""
+    """Marks the page edited on every document update this client sends."""
 
     def __init__(self, inner: Channel, on_write) -> None:  # noqa: ANN001 (callback)
         self._inner = inner
@@ -110,11 +132,50 @@ class WriteTrackingChannel:
 
     async def recv(self) -> bytes:
         message = await self._inner.recv()
-        if message[0] == int(YMessageType.SYNC):
+        if _carries_update(message):
             self._on_write()
         return message
 
     def __aiter__(self) -> WriteTrackingChannel:
+        return self
+
+    async def __anext__(self) -> bytes:
+        return await self.recv()
+
+
+class GuardedChannel:
+    """Drops a writable client's document pushes once it may no longer write.
+
+    The connect-time check only guards the handshake: a page trashed or a
+    member demoted to viewer (or removed) after connecting must lose write
+    access from the next push on. Every state push (sync step 2 or update)
+    is preceded by a fresh access check; sync step 1 (asking for the
+    document) and awareness still flow, like for a read-only client.
+    """
+
+    def __init__(self, inner: Channel, may_write) -> None:  # noqa: ANN001 (callback)
+        self._inner = inner
+        self._may_write = may_write
+
+    @property
+    def path(self) -> str:
+        return self._inner.path
+
+    async def send(self, message: bytes) -> None:
+        await self._inner.send(message)
+
+    async def recv(self) -> bytes:
+        while True:
+            message = await self._inner.recv()  # StopAsyncIteration propagates
+            if message[0] == int(YMessageType.SYNC) and message[1] != int(
+                YSyncMessageType.SYNC_STEP1
+            ):
+                if not await self._may_write():
+                    continue  # dropped, like a read-only client's push
+                return message
+            return message
+
+    def __aiter__(self) -> GuardedChannel:
         return self
 
     async def __anext__(self) -> bytes:
