@@ -456,6 +456,22 @@ class PageService(BaseService[Page]):
             page.workspace_id, "page.deleted", actor_id=user_id, page_id=page_id
         )
 
+    async def _own_trash_ids(
+        self, root_id: uuid.UUID, subtree: list[uuid.UUID]
+    ) -> list[uuid.UUID]:
+        """The subtree minus independent trash roots and their subtrees.
+
+        A descendant that was already in the trash when this root was deleted
+        kept its own trash item (``deleted_root`` stays true). Restoring or
+        purging the root must not touch those: they keep their trash entry.
+        """
+        nodes = {node.id: node for node in await self.repo.get_many(subtree)}
+        excluded: set[uuid.UUID] = set()
+        for node_id in subtree:
+            if node_id != root_id and nodes[node_id].deleted_root:
+                excluded.update(await self.repo.subtree_ids(node_id))
+        return [node_id for node_id in subtree if node_id not in excluded]
+
     async def restore_page(
         self, page_id: uuid.UUID, *, user_id: uuid.UUID
     ) -> PageDetail:
@@ -464,7 +480,7 @@ class PageService(BaseService[Page]):
         if page.deleted_at is None:
             raise NotInTrashError()
         subtree = await self.repo.subtree_ids(page_id)
-        await self.repo.restore_trashed(subtree)
+        await self.repo.restore_trashed(await self._own_trash_ids(page_id, subtree))
 
         parent = await self.repo.get(page.parent_id, raise_error=False)
         if parent is None or parent.deleted_at is not None:
@@ -488,6 +504,10 @@ class PageService(BaseService[Page]):
         self._require_editor(member)
         if page.deleted_at is None:
             raise NotInTrashError()
+        subtree = await self.repo.subtree_ids(page_id)
+        # Independent trash roots inside the subtree would cascade-delete with
+        # it (parent FK); move them out first, still trashed, at the root.
+        await self.repo.detach_trash_roots(subtree, page_id)
         await self.repo.delete(page_id)
         self._log_entity(page_id)
         self._publish(

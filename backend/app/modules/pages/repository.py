@@ -137,6 +137,27 @@ class PageRepository(SQLAlchemyRepository[Page]):
         await self._session.execute(statement)
         await self._session.commit()
 
+    async def detach_trash_roots(
+        self, page_ids: list[uuid.UUID], keep_root_id: uuid.UUID
+    ) -> None:
+        """Move independent trash roots out of a subtree about to be purged.
+
+        Without this, the purge's ``ON DELETE CASCADE`` would also delete pages
+        that have their own trash entry; they move to the workspace root,
+        still trashed, and keep their own restore/purge lifecycle.
+        """
+        statement = (
+            update(Page)
+            .where(
+                Page.id.in_(page_ids),
+                Page.id != keep_root_id,
+                Page.deleted_root.is_(True),
+            )
+            .values(parent_id=None)
+        )
+        await self._session.execute(statement)
+        await self._session.commit()
+
     async def database_rows(self, database_id: uuid.UUID) -> list[Page]:
         statement = (
             select(Page)
