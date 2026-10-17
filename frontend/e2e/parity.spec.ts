@@ -225,6 +225,13 @@ async function shoot(page: Page, surface: string, theme: Theme) {
   await page.screenshot({ path: `${shots}/${surface}-${theme}.png` })
 }
 
+/**
+ * The first check after a navigation. Four workers load cold routes at once,
+ * and the dev server compiles each module on its first request: on a busy
+ * machine the first paint can take more than the 10 s expect timeout.
+ */
+const FIRST_LOAD = { timeout: 20_000 }
+
 async function openApp(page: Page, theme: Theme, path: string) {
   await page.setViewportSize(METRICS.viewport)
   await page.emulateMedia({ colorScheme: theme, reducedMotion: 'no-preference' })
@@ -269,7 +276,7 @@ for (const theme of ['light', 'dark'] as const) {
   test.describe(`Notion parity (${theme})`, () => {
     test('landing and login', async ({ page }) => {
       await openApp(page, theme, '/')
-      await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+      await expect(page.getByRole('heading', { level: 1 })).toBeVisible(FIRST_LOAD)
       await expectThemeBase(page, theme, 'landing')
       await expectStableLoad(page, `landing (${theme})`)
       await shoot(page, 'landing', theme)
@@ -277,7 +284,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.goto('/login')
       await expect(page).toHaveURL('/login')
       const email = page.getByLabel('Email')
-      await expect(email).toBeVisible()
+      await expect(email).toBeVisible(FIRST_LOAD)
       await expectThemeBase(page, theme, 'login')
       near(await px(email, 'font-size'), METRICS.uiFontSize, 'login input font size')
       await expectStableLoad(page, `login (${theme})`)
@@ -293,7 +300,7 @@ for (const theme of ['light', 'dark'] as const) {
       await trashPage(api, user, trashed.id)
 
       await openApp(page, theme, '/home')
-      await expect(page.getByTestId('workspace-name')).toHaveText(workspace.name)
+      await expect(page.getByTestId('workspace-name')).toHaveText(workspace.name, FIRST_LOAD)
       await expectThemeBase(page, theme, 'home')
       await shoot(page, 'home', theme)
 
@@ -401,7 +408,7 @@ for (const theme of ['light', 'dark'] as const) {
       await openApp(page, theme, `/p/${note.id}`)
       await collab
       const editor = page.getByTestId('editor')
-      await expect(editor).toBeVisible({ timeout: 15_000 })
+      await expect(editor).toBeVisible(FIRST_LOAD)
       await expectStableLoad(page, `page (${theme})`)
       await page.getByTestId('import-markdown-input').setInputFiles({
         name: 'parity.md',
@@ -557,7 +564,7 @@ for (const theme of ['light', 'dark'] as const) {
 
       await openApp(page, theme, `/p/${database.id}`)
       const table = page.getByRole('table', { name: 'Table' })
-      await expect(table).toBeVisible()
+      await expect(table).toBeVisible(FIRST_LOAD)
       await expectThemeBase(page, theme, 'database')
       await expectStableLoad(page, `database (${theme})`)
       const sidebarBox = await box(page.getByTestId('sidebar'))
@@ -616,7 +623,7 @@ for (const theme of ['light', 'dark'] as const) {
 
       await openApp(page, theme, `/share/${shared.public_id}`)
       const title = page.getByRole('heading', { name: 'Public' })
-      await expect(title).toBeVisible()
+      await expect(title).toBeVisible(FIRST_LOAD)
       await expectThemeBase(page, theme, 'public page')
       near(await px(title, 'font-size'), METRICS.title.fontSize, 'public title font size')
       expect
@@ -632,7 +639,7 @@ for (const theme of ['light', 'dark'] as const) {
 
     test('hover, focus and the sidebar collapse', async ({ authedPage: page }) => {
       await openApp(page, theme, '/home')
-      await expect(page.getByTestId('workspace-name')).toBeVisible()
+      await expect(page.getByTestId('workspace-name')).toBeVisible(FIRST_LOAD)
       await expectStableLoad(page, `home (${theme})`)
 
       const home = page.getByRole('link', { name: 'Home' })
