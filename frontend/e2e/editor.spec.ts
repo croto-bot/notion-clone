@@ -26,8 +26,9 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
     api,
     user,
   }) => {
-    // The reconnect wait can reach y-websocket's 30 s backoff ceiling.
-    test.setTimeout(90_000)
+    // The reconnect attempts back off at most 2.5 s (y-websocket 3.1.0
+    // maxBackoffTime), so a few seconds offline covers several retries.
+    test.setTimeout(60_000)
     const workspace = await ensureWorkspace(api, user)
     const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Slow socket' })
     await page.goto(`/p/${note.id}`)
@@ -55,15 +56,94 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
         async () =>
           (await editor.count()) === 0 &&
           (await page.evaluate(() => performance.now())) - startedAt > 4000,
-        { timeout: 20_000, intervals: [250] }
+        { timeout: 15_000, intervals: [250] }
       )
       .toBe(true)
 
-    // Back online the socket reconnects, syncs, and the saved content shows.
+    // Back online the socket reconnects (backoff capped at 2.5 s), syncs, and
+    // the saved content shows.
     await page.context().setOffline(false)
-    await expect(editor).toBeVisible({ timeout: 45_000 })
+    await expect(editor).toBeVisible({ timeout: 15_000 })
     await expect(editor).toContainText('Saved while online')
   })
+  test('keeps a synced editor mounted offline and merges the edits on reconnect', async ({
+    authedPage: page,
+    loginAs,
+    api,
+    user,
+  }) => {
+    // The reconnect attempts back off at most 2.5 s (y-websocket 3.1.0
+    // maxBackoffTime), but the drop itself is noticed by the server only at
+    // its next WebSocket ping (up to 20 s + 20 s pong timeout), so this test
+    // lives on the ping schedule, not the backoff schedule.
+    test.setTimeout(180_000)
+    const workspace = await ensureWorkspace(api, user)
+    const blair = await registerUser(api, uniqueEmail('blair'), PASSWORD, 'Blair')
+    await addMember(api, user, workspace.id, blair, 'editor')
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Offline' })
+
+    // A second member watches the same page: whatever the offline editor
+    // merges on reconnect must reach the server and then Blair.
+    const other = await loginAs(blair)
+    const otherSocket = other.waitForEvent('websocket', {
+      predicate: socket => socket.url().includes(pageCollabPath(note.id)),
+      timeout: 20_000,
+    })
+    await other.goto(`/p/${note.id}`)
+    await otherSocket
+    const otherEditor = other.getByTestId('editor')
+    await expect(otherEditor).toBeVisible({ timeout: 15_000 })
+
+    const collab = page.waitForEvent('websocket', {
+      predicate: socket => socket.url().includes(pageCollabPath(note.id)),
+      timeout: 20_000,
+    })
+    await page.goto(`/p/${note.id}`)
+    await collab
+    const editor = page.getByTestId('editor')
+    await expect(editor).toBeVisible({ timeout: 15_000 })
+    await expect(
+      page.getByTestId('presence-avatars').getByRole('img', { name: 'Blair' })
+    ).toBeVisible({ timeout: 15_000 })
+    await editor.click()
+    await page.keyboard.insertText('Before the drop')
+    await expect(editor).toContainText('Before the drop')
+    // The server must hold the text before the network goes away: the merge
+    // test has to prove the offline edits are NEW, not a slow online flush.
+    await expect
+      .poll(async () => (await getDocument(api, user, note.id)).state, { timeout: 15_000 })
+      .not.toBeNull()
+
+    // Cut the network while the socket stays open. The server only notices
+    // at its next WebSocket ping (uvicorn defaults: ping every 20 s, close
+    // after 20 s without a pong), so the drop reaches the page up to ~40 s
+    // later: Blair's avatar leaves Ada's awareness (y-websocket drops every
+    // remote peer on close) and, with it, the reconnect cycle starts.
+    await page.context().setOffline(true)
+    await expect(
+      page.getByTestId('presence-avatars').getByRole('img', { name: 'Blair' })
+    ).toBeHidden({ timeout: 60_000 })
+
+    // The synced editor stays mounted across the reconnect attempts (the
+    // backoff runs 200 ms..2.5 s per attempt) and takes the offline edit
+    // (SPEC F6): the editor keeps its document and focus while offline.
+    await editor.click()
+    await page.keyboard.insertText(' offline thought')
+    await expect(editor).toContainText('Before the drop offline thought')
+
+    // Back online the local edits merge up: the other member receives them
+    // live, and a fresh load (straight from the stored document) shows them.
+    await page.context().setOffline(false)
+    await expect(otherEditor).toContainText('Before the drop offline thought', {
+      timeout: 15_000,
+    })
+    await page.reload()
+    const reloaded = page.getByTestId('editor')
+    await expect(reloaded).toContainText('Before the drop offline thought', {
+      timeout: 15_000,
+    })
+  })
+
   test('types, uses the slash menu and imports markdown', async ({
     authedPage: page,
     api,
@@ -110,8 +190,9 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
     api,
     user,
   }) => {
-    // The reconnect wait can reach y-websocket's 30 s backoff ceiling.
-    test.setTimeout(90_000)
+    // The reconnect attempts back off at most 2.5 s (y-websocket 3.1.0
+    // maxBackoffTime), so a few seconds offline covers several retries.
+    test.setTimeout(60_000)
     const workspace = await ensureWorkspace(api, user)
     const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Gate import' })
     await page.goto(`/p/${note.id}`)
@@ -132,7 +213,7 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
 
     // Once the editor is up, the import path is available again.
     await page.context().setOffline(false)
-    await expect(page.getByTestId('editor')).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByTestId('editor')).toBeVisible({ timeout: 15_000 })
     await page.getByRole('button', { name: 'Page options' }).click()
     await expect(page.getByRole('menuitem', { name: 'Import Markdown' })).toBeEnabled()
     await page.keyboard.press('Escape')

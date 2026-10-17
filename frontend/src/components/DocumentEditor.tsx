@@ -27,13 +27,15 @@ interface DocumentEditorProps {
 }
 
 /**
- * The editor mounts only once the document is safe to show: after the first
- * sync with the server, or when the socket has given up (offline). Mounting
- * on a timer while it is still connecting would hand the user an empty,
- * editable document that the real content then overwrites.
+ * The editor mounts once the document is safe to show, and then stays
+ * mounted for the life of the provider: after the first sync (`hasSynced`,
+ * which a network drop cannot take away), or when the socket has given up
+ * for good (`status === 'disconnected'`, the server refused with a terminal
+ * close code). While it has never synced, mounting would hand the user an
+ * empty, editable document that the real content then overwrites.
  */
 export function DocumentEditor({ page, session, editable }: DocumentEditorProps) {
-  if (!session || !(session.synced || session.status === 'disconnected')) {
+  if (!session || !(session.hasSynced || session.status === 'disconnected')) {
     return <EditorSkeleton />
   }
   return <CollabEditor page={page} session={session} editable={editable} />

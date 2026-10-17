@@ -26,8 +26,17 @@ export interface CollabSession {
   status: CollabStatus
   /** Other people on the page, once per person (a person with two tabs shows once). */
   users: PresenceUser[]
-  /** True after the first sync with the server: the document is complete. */
+  /** True while the document is fully synced with the server right now. */
   synced: boolean
+  /**
+   * True once this provider has completed a sync, until the provider is
+   * destroyed. A drop makes `synced` false while the socket retries (y-websocket
+   * 3.1.0 emits `disconnected` once and then `connecting` on every retry, about
+   * every 200 ms..2.5 s), so `synced` alone would unmount a healthy editor on
+   * every network blip. Once synced, the editor stays mounted: local edits wait
+   * in the Yjs doc and merge on reconnect (SPEC F6).
+   */
+  hasSynced: boolean
   user: { id: string; name: string; color: string }
 }
 
@@ -65,6 +74,7 @@ export function useCollabSession(pageId: string): CollabSession | null {
   const live = useSyncExternalStore(store.subscribe, store.get, () => null)
   const [status, setStatus] = useState<CollabStatus>('connecting')
   const [synced, setSynced] = useState(false)
+  const [hasSynced, setHasSynced] = useState(false)
   const [users, setUsers] = useState<PresenceUser[]>([])
 
   const myId = me?.id
@@ -93,7 +103,12 @@ export function useCollabSession(pageId: string): CollabSession | null {
     })
 
     const onStatus = ({ status: next }: { status: CollabStatus }) => setStatus(next)
-    const onSync = (isSynced: boolean) => setSynced(isSynced)
+    // `synced` follows the socket; `hasSynced` latches on the first sync and is
+    // only cleared when this provider goes away (the cleanup below).
+    const onSync = (isSynced: boolean) => {
+      setSynced(isSynced)
+      if (isSynced) setHasSynced(true)
+    }
     const onAwareness = () => setUsers(readUsers(provider, identity.id))
     const onClose = (event: CloseEvent | null) => {
       // The backend refuses with these codes: retrying would loop forever.
@@ -117,6 +132,7 @@ export function useCollabSession(pageId: string): CollabSession | null {
       store.set(null)
       setStatus('connecting')
       setSynced(false)
+      setHasSynced(false)
       setUsers([])
     }
   }, [pageId, token, identityReady, store])
@@ -137,6 +153,7 @@ export function useCollabSession(pageId: string): CollabSession | null {
     ...live,
     status,
     synced,
+    hasSynced,
     users,
     user: { id: myId, name: myName, color: colorForUser(myId) },
   }
