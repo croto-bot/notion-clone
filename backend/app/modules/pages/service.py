@@ -364,6 +364,14 @@ class PageService(BaseService[Page]):
         if parent_id == page_id:
             raise InvalidMoveError()
         if parent_id is not None:
+            # Serialize against concurrent moves before the subtree check: two
+            # moves that each pass the check on stale rows can write a cycle
+            # (A under B while B under A). The lock also re-reads the moved
+            # page, so a trash that committed meanwhile is seen here.
+            chain = await self.repo.ancestor_ids(parent_id)
+            await self.repo.lock_for_move([page_id, parent_id, *chain])
+            if page.deleted_at is not None:
+                raise PageInTrashError()
             subtree = await self.repo.subtree_ids(page_id)
             if parent_id in subtree:
                 raise InvalidMoveError()

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import asc, case, select, update
+from sqlalchemy import asc, case, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.modules.pages.models import Page, PageFavorite, PageKind, PageVisit
@@ -99,19 +99,55 @@ class PageRepository(SQLAlchemyRepository[Page]):
         return list(result.scalars().all())
 
     async def subtree_ids(self, root_id: uuid.UUID) -> list[uuid.UUID]:
-        """The root and all its descendants, recursively."""
-        descendants = (
-            select(Page.id, Page.parent_id)
-            .where(Page.id == root_id)
-            .cte(name="subtree", recursive=True)
+        """The root and all its descendants, recursively.
+
+        The CYCLE clause (Postgres 14+) stops the walk when the rows contain a
+        parent cycle (two concurrent moves could write one before the row
+        locks existed), so one bad row cannot hang trash, restore, duplicate
+        and move with an endless recursion.
+        """
+        statement = text(
+            "WITH RECURSIVE subtree(id) AS ("
+            "SELECT id FROM pages WHERE id = :root "
+            "UNION ALL "
+            "SELECT p.id FROM pages p JOIN subtree s ON p.parent_id = s.id"
+            ") CYCLE id SET is_cycle USING path "
+            "SELECT DISTINCT id FROM subtree"
         )
-        parent = descendants.alias("subtree_parent")
-        descendants = descendants.union_all(
-            select(Page.id, Page.parent_id).join(parent, Page.parent_id == parent.c.id)
-        )
-        statement = select(descendants.c.id)
-        result = await self._session.execute(statement)
+        result = await self._session.execute(statement, {"root": root_id})
         return [row for (row,) in result.all()]
+
+    async def ancestor_ids(self, page_id: uuid.UUID) -> list[uuid.UUID]:
+        """The parent chain of a page (the page itself excluded), cycle-safe."""
+        statement = text(
+            "WITH RECURSIVE chain(id) AS ("
+            "SELECT parent_id FROM pages WHERE id = :page "
+            "UNION ALL "
+            "SELECT p.parent_id FROM pages p "
+            "JOIN chain c ON p.id = c.id WHERE c.id IS NOT NULL"
+            ") CYCLE id SET is_cycle USING path "
+            "SELECT DISTINCT id FROM chain WHERE id IS NOT NULL"
+        )
+        result = await self._session.execute(statement, {"page": page_id})
+        return [row for (row,) in result.all()]
+
+    async def lock_for_move(self, page_ids: list[uuid.UUID]) -> None:
+        """Row-lock the pages a move touches, in a stable order (no commit).
+
+        Locking the moved page, the new parent and the parent's ancestor chain
+        serializes concurrent moves that could form a cycle: whoever locks
+        second re-reads the committed edges before its subtree check. The
+        order by id keeps every locker waiting in the same order, so two
+        moves cannot deadlock on each other. The caller's update commit (or
+        its rollback on error) releases the locks.
+        """
+        statement = (
+            select(Page.id)
+            .where(Page.id.in_(page_ids))
+            .order_by(Page.id)
+            .with_for_update()
+        )
+        await self._session.execute(statement)
 
     async def mark_trashed(
         self, page_ids: list[uuid.UUID], root_id: uuid.UUID, now: datetime

@@ -9,6 +9,8 @@ from tests.e2e.helpers import assert_error, create_page, create_workspace
 if TYPE_CHECKING:
     import httpx
 
+    from tests.e2e.stack import Database
+
 
 def test_move_to_another_parent(auth_client: httpx.Client) -> None:
     workspace = create_workspace(auth_client)
@@ -94,3 +96,34 @@ def test_move_missing_page_is_404(auth_client: httpx.Client) -> None:
     )
 
     assert_error(response, 404, "not_found")
+
+
+# --- parent cycles (review finding 5) -------------------------------------------
+
+
+def test_move_in_a_cycled_tree_is_invalid_not_a_hang(
+    auth_client: httpx.Client, db: Database
+) -> None:
+    """A parent cycle (two overlapping moves) must not hang the tree walks.
+
+    The API cannot create the cycle without the fix, so the db fixture inserts
+    it: A -> B -> A. Every recursive query must stop (CYCLE clause) and the
+    cycle-forming move must return 400 invalid_move, not a 500 or a hang.
+    """
+    workspace = create_workspace(auth_client)
+    a = create_page(auth_client, workspace["id"], title="A")
+    b = create_page(auth_client, workspace["id"], parent_id=a["id"], title="B")
+    c = create_page(auth_client, workspace["id"], title="C")
+    # B is under A; force A under B: the tree is now the cycle A -> B -> A.
+    assert db.execute("UPDATE pages SET parent_id = %s WHERE id = %s", (b["id"], a["id"]))
+
+    assert_error(
+        auth_client.post(f"/pages/{b['id']}/move", json={"parent_id": a["id"]}),
+        400,
+        "invalid_move",
+    )
+
+    # The parent-chain walk of a move under the cycled tree must stop too.
+    moved = auth_client.post(f"/pages/{c['id']}/move", json={"parent_id": b["id"]})
+    assert moved.status_code == 200
+    assert moved.json()["parent_id"] == b["id"]
