@@ -17,9 +17,9 @@ from tests.e2e.helpers import (
     held_db_lock,
     make_member,
     wait_for_blocked_queries,
+    yjs_recv_update,
     yjs_send_update,
     yjs_sync,
-    yjs_wait_for,
 )
 
 if TYPE_CHECKING:
@@ -203,10 +203,14 @@ def test_duplicate_copies_the_live_room_state_while_it_is_dirty(
                 XmlElement("p", contents=[XmlText("flushless-needle")])
             )
         yjs_send_update(conn, doc)
-        yjs_wait_for(conn, doc, "flushless-needle")
+        # Wait until the SERVER has applied the update, not just until our own
+        # local doc holds it: the room broadcasts every applied update back to
+        # all clients, so the echo on this connection is the proof. Duplicating
+        # before the echo would race the server's receive path, not the flush.
+        yjs_recv_update(conn, doc)
 
-        # Duplicate right after the edit, before the room's ~1 s flush debounce
-        # could persist it: the copy must still carry the live text.
+        # Duplicate right after the server applied the edit, before the room's
+        # ~1 s flush debounce could persist it: the copy must carry the live text.
         copy = auth_client.post(f"/pages/{source['id']}/duplicate").json()
 
         stored_copy = auth_client.get(f"/pages/{copy['id']}/document").json()
