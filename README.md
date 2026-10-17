@@ -105,7 +105,7 @@ bun install && bun run dev    # http://localhost:3000
 After `git init` (and `uv sync` in `backend/`, `bun install` in `frontend/`):
 
 ```bash
-make pre-commit-install       # ruff, frontend eslint + prettier, no-mock guards
+make pre-commit-install       # ruff, frontend eslint + prettier, demo-script prettier, no-mock guards
 make pre-commit-run           # run them on every tracked file
 ```
 
@@ -157,7 +157,7 @@ All tests are end to end against the real stack. There are no unit tests and no 
 make test             # both suites
 make test-backend     # API suite: Postgres (testcontainers) + migrations + live server (needs Docker)
 make test-e2e         # browser suite: Postgres + backend + Vite + Playwright (needs Docker, uv, bun, Chromium)
-make check            # every static check: ruff, ESLint, prettier, tsc, build
+make check            # every static check: ruff, ESLint, prettier, tsc, build, demo scripts
 make ci               # check + test
 ```
 
@@ -171,11 +171,11 @@ Where tests go and how to write them: [AGENTS.md](AGENTS.md#testing-end-to-end-o
 
 The target does three things:
 
-1. `scripts/demo/stack.sh up` starts a separate stack: Postgres in a container named `noted-demo-db` (port 57732, data in memory), the backend (port 57195), and a production build of the frontend (port 57400). Set `DEMO_DB_PORT`, `DEMO_BACKEND_PORT` or `DEMO_FRONTEND_PORT` to use other ports.
+1. `scripts/demo/stack.sh up` starts a separate stack: Postgres in a container named `noted-demo-db` (port 57732, data in memory), the backend (port 57195), and a production build of the frontend (port 57400). Set `DEMO_DB_PORT`, `DEMO_BACKEND_PORT` or `DEMO_FRONTEND_PORT` to use other ports, and `DEMO_DB_IMAGE` to use another Postgres image (default: the `db` image in `docker-compose.yml`). If a step fails or you press Ctrl-C, it stops what it already started. Each wait stops after 2 minutes.
 2. `node scripts/demo/record.ts` seeds a demo workspace through the API before each video, films Chromium at 1920x1080, and writes `docs/media/<video>.mp4` (H.264) and `docs/media/<video>.gif` (the first 8 seconds). If an expected element does not appear, it stops with an error and saves a screenshot in `scripts/demo/out/`.
-3. `scripts/demo/stack.sh down` stops only what step 1 started.
+3. `scripts/demo/stack.sh down` stops only what step 1 started. It also runs when step 1 or step 2 fails. It stops a server only if its PID still runs the command that step 1 started.
 
-To record one video, run `make demo-videos SCENES=tour`. The names are `tour`, `collaboration`, `databases` and `share`. `scripts/demo/check.sh` prints the format of each video and saves three frames of each to look at.
+To record one video, run `make demo-videos SCENES=tour`. The names are `tour`, `collaboration`, `databases` and `share`. `scripts/demo/check.sh` prints the format of each video and saves three frames of each to look at. `make demo-check` checks the recorder scripts (prettier and `tsc --noEmit`, with the frontend's pinned versions). `make check` runs it.
 
 ## Make targets
 

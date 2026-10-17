@@ -60,7 +60,7 @@ bun run dev                                   # http://localhost:3000
 
 ```bash
 (cd backend && uv sync) && (cd frontend && bun install)
-make pre-commit-install       # ruff, frontend eslint + prettier, no-mock guards
+make pre-commit-install       # ruff, frontend eslint + prettier, demo-script prettier, no-mock guards
 ```
 
 ## File map
@@ -88,7 +88,7 @@ make pre-commit-install       # ruff, frontend eslint + prettier, no-mock guards
 | `frontend/public/` | Static files (`favicon.ico`, `favicon-light.svg`, `favicon-dark.svg`, `robots.txt`) |
 | `frontend/package.json`, `frontend/bun.lock` | npm dependencies (exact pins), scripts, lint-staged config |
 | `frontend/playwright.config.ts`, `frontend/eslint.config.js`, `frontend/vite.config.ts` | Test stack, lint rules (incl. no-mock rules), build |
-| `scripts/demo/` | README video recorder: `stack.sh up` and `stack.sh down` (a throwaway stack on ports 57732, 57195, 57400), `record.ts` (seed, film, encode), `check.sh` (format + frames). Run with `make demo-videos`. Not a test suite |
+| `scripts/demo/` | README video recorder: `stack.sh up` and `stack.sh down` (a throwaway stack on ports 57732, 57195, 57400), `record.ts` (seed, film, encode), `check.sh` (format + frames), `tsconfig.json` (for `make demo-check`). Run with `make demo-videos`. Not a test suite |
 | `docs/media/` | The README demo videos (`*.mp4`) and their GIF previews, written by `scripts/demo/record.ts` |
 
 ## Testing: end-to-end only
@@ -108,7 +108,7 @@ How to write a test, fixtures and guards: `.claude/skills/project-standards/refe
 | `make test-backend` | Backend suite (`cd backend && uv run pytest`). Needs Docker |
 | `make test-backend-cov` | Backend suite with coverage (`backend/htmlcov/`) |
 | `make test-e2e` | Full-stack suite (`cd frontend && bun run test:e2e`). Needs Docker, uv, bun, Chromium (`cd frontend && bunx playwright install --with-deps chromium`) |
-| `make check` | Every static check, no file changes: ruff, ESLint, prettier, `tsc`, build |
+| `make check` | Every static check, no file changes: ruff, ESLint, prettier, `tsc`, build, and `make demo-check` (prettier + `tsc` on `scripts/demo/`) |
 | `make ci` | `make check` + `make test` |
 
 The test suites use their own ports (Postgres 55432, backend 59095, frontend 53000) and never touch the dev stack. The e2e frontend turns off the TanStack devtools event bus (fixed port 42069), so `bun run dev` can stay up.
