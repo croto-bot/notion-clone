@@ -8,7 +8,7 @@
 # Ports: DEMO_DB_PORT (57732), DEMO_BACKEND_PORT (57195), DEMO_FRONTEND_PORT (57400).
 # DEMO_DB_IMAGE overrides the Postgres image (default: the db image in docker-compose.yml).
 # `down` stops only what `up` started: the container by its name, the servers by
-# the PIDs kept in scripts/demo/.run/.
+# the PIDs kept in scripts/demo/.run/, and only while each still runs the same command.
 # A failed `up` stops what it already started.
 set -euo pipefail
 
@@ -43,9 +43,14 @@ start_server() {
   shift
   nohup "$@" >"$run_dir/$name.log" 2>&1 &
   echo $! >"$run_dir/$name.pid"
+  echo "$*" >"$run_dir/$name.cmd"
 }
 
 up() {
+  if [ -z "$DB_IMAGE" ]; then
+    echo "demo: no db image found in docker-compose.yml (set DEMO_DB_IMAGE)" >&2
+    exit 1
+  fi
   mkdir -p "$run_dir"
   for port in "$DB_PORT" "$BACKEND_PORT" "$FRONTEND_PORT"; do
     if port_is_open "$port"; then
@@ -85,12 +90,15 @@ down() {
   for name in frontend backend; do
     local pid_file="$run_dir/$name.pid"
     [ -f "$pid_file" ] || continue
-    # uv runs uvicorn as its child process: stop the children too.
     local pid
     pid="$(cat "$pid_file")"
-    pkill -TERM -P "$pid" 2>/dev/null || true
-    kill -TERM "$pid" 2>/dev/null || true
-    rm -f "$pid_file"
+    # A stale pid file can name a process that is not ours any more.
+    if [ "$(ps -ww -o args= -p "$pid" 2>/dev/null)" = "$(cat "$run_dir/$name.cmd")" ]; then
+      # uv runs uvicorn as its child process: stop the children too.
+      pkill -TERM -P "$pid" 2>/dev/null || true
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+    rm -f "$pid_file" "$run_dir/$name.cmd"
   done
   docker rm -f "$DB_CONTAINER" >/dev/null 2>&1 || true
   echo "demo: stack stopped"

@@ -16,7 +16,7 @@ for video in "$media"/*.mp4; do
   echo "$name.mp4 $(du -h "$video" | cut -f1) $probe gif $(du -h "$media/$name.gif" | cut -f1)"
   duration="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$video")"
   for percent in 15 50 85; do
-    at="$(echo "$duration * $percent / 100" | bc -l)"
+    at="$(awk -v d="$duration" -v p="$percent" 'BEGIN { print d * p / 100 }')"
     ffmpeg -y -loglevel error -ss "$at" -i "$video" -frames:v 1 "$frames/$name-$percent.png"
   done
 done
