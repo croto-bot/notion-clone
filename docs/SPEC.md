@@ -105,7 +105,7 @@ with `page`, `size`) unless marked **(not paged)**.
 | DELETE | `/pages/{id}/permanent` | | 204. Only trashed pages (else 409 `not_in_trash`) |
 | GET | `/pages/{id}/rows` | | **(not paged)** `PageResponse[]` (without breadcrumbs: `[]`) of a database's non-trashed rows, by position. 400 `not_a_database` for normal pages |
 | GET | `/pages/{id}/document` | | `{state: base64 | null}`: the stored Yjs update (the live collab room's state when a socket is connected, else `ydoc_state`) |
-| PUT | `/pages/{id}/document` | `{state: base64}` | `{state}`. Merges the update into the stored document (used by Markdown import before the editor connects, and by tests). Viewer = 403, trashed page = 400 `page_in_trash` |
+| PUT | `/pages/{id}/document` | `{state: base64}` | `{state}`. Merges the update into the stored document (an integration/test endpoint; the app's Markdown import goes through the live editor's replaceBlocks, not this). Viewer = 403, trashed page = 400 `page_in_trash` |
 | PUT | `/pages/{id}/favorite` | | 204 |
 | DELETE | `/pages/{id}/favorite` | | 204 |
 | GET | `/pages/{id}/comments` | | **(not paged)** `CommentResponse[]` oldest first = `{id, page_id, parent_id, body, resolved, edited, author: {id, display_name, email}, created_at, updated_at}` |

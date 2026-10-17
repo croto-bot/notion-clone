@@ -419,21 +419,6 @@ export async function getDocument(
   return (await response.json()) as DocumentResponse
 }
 
-/** Merges a base64 Yjs update into the stored document (how a spec seeds page content). */
-export async function putDocument(
-  api: APIRequestContext,
-  user: Token,
-  pageId: string,
-  state: string
-): Promise<DocumentResponse> {
-  const response = await api.put(`/pages/${pageId}/document`, {
-    data: { state },
-    headers: authHeaders(user),
-  })
-  await expectOk(response, `PUT /pages/${pageId}/document`)
-  return (await response.json()) as DocumentResponse
-}
-
 export async function listComments(
   api: APIRequestContext,
   user: Token,

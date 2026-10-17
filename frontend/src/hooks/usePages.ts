@@ -18,7 +18,6 @@ import { moveInList, removeSubtree } from '@/features/pages/page-tree'
 import type {
   CreatePageData,
   MovePageData,
-  DocumentResponse,
   PageResponse,
   PageSummary,
   SearchResult,
@@ -275,13 +274,6 @@ export function usePurgePage() {
       queryClient.removeQueries({ queryKey: queryKeys.pages.detail(id) })
       invalidatePageLists(queryClient)
     },
-  })
-}
-
-export function usePutDocument() {
-  return useMutation({
-    mutationFn: ({ id, state }: { id: string; state: string }) =>
-      api.put<DocumentResponse>(API.PAGES.DOCUMENT(id), { state }),
   })
 }
 
