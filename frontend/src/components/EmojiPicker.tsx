@@ -69,7 +69,7 @@ export function EmojiPicker({ onSelect, onRemove }: EmojiPickerProps) {
             ),
             Emoji: ({ emoji, ...props }) => (
               <button
-                className="data-[active]:bg-hover-strong flex size-[34px] items-center justify-center rounded-[4px] text-[22px] transition-colors duration-75"
+                className="data-[active]:bg-hover-strong flex size-[34px] items-center justify-center rounded-[4px] text-[22px] transition-colors duration-100"
                 {...props}
               >
                 {emoji.emoji}

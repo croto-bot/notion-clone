@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils'
 import type { DatabaseProperty, SortDirection } from '@/types/database'
 
 const itemClass =
-  'flex min-h-[28px] w-full items-center gap-2 rounded-[4px] px-2 py-1 text-left text-[14px] transition-colors duration-75 hover:bg-hover [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground'
+  'flex min-h-[28px] w-full items-center gap-2 rounded-[4px] px-2 py-1 text-left text-[14px] transition-colors duration-100 hover:bg-hover [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground'
 
 interface PropertyMenuProps {
   property: DatabaseProperty
