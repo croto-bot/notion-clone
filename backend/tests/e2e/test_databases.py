@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import threading
-import time
 from typing import TYPE_CHECKING
 
-from tests.e2e.helpers import assert_error, create_page, create_workspace
+from tests.e2e.helpers import (
+    assert_error,
+    create_page,
+    create_workspace,
+    held_db_lock,
+    wait_for_blocked_queries,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -175,34 +180,25 @@ def test_row_properties_patch_merges_atomically_when_writes_overlap(
     # Hold the row lock so both PATCHes park inside their UPDATE: each one
     # reads the row (MVCC, unblocked) while the base is still the original,
     # then queues on the lock. Releasing it serializes the two UPDATEs.
-    db.execute("BEGIN")
-    db.execute("SELECT id FROM pages WHERE id = %s FOR UPDATE", (row["id"],))
-    parked_for_s = 1.0
     responses: list[httpx.Response] = []
-    durations: list[float] = []
 
     def send_patch(properties: dict[str, object]) -> None:
-        started = time.monotonic()
         responses.append(
             auth_client.patch(f"/pages/{row['id']}", json={"properties": properties})
         )
-        durations.append(time.monotonic() - started)
 
     patches = [{"priority": 1}, {"done": True}]
     threads = [threading.Thread(target=send_patch, args=(patch,)) for patch in patches]
-    try:
+    with held_db_lock(
+        db, "SELECT id FROM pages WHERE id = %s FOR UPDATE", (row["id"],)
+    ):
         for thread in threads:
             thread.start()
-        # Give both requests time to reach their blocked UPDATE.
-        time.sleep(parked_for_s)
-    finally:
-        db.execute("ROLLBACK")
-        for thread in threads:
-            thread.join(timeout=10)
+        # Both requests are inside their UPDATE, waiting on the row lock.
+        wait_for_blocked_queries(db, count=2, needle="UPDATE pages")
+    for thread in threads:
+        thread.join(timeout=10)
 
-    # Both PATCHes really were parked for the whole window: that is what
-    # makes the overlap (two reads of one base row) deterministic.
-    assert all(duration >= parked_for_s * 0.5 for duration in durations), durations
     assert all(response.status_code == 200 for response in responses), responses
     stored = auth_client.get(f"/pages/{row['id']}").json()
     assert stored["properties"] == {"status": "todo", "priority": 1, "done": True}
