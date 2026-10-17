@@ -22,6 +22,47 @@ import {
 } from './fixtures'
 
 test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
+  test('never mounts an empty editable editor while the socket cannot connect', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Slow socket' })
+    await page.goto(`/p/${note.id}`)
+    const editor = page.getByTestId('editor')
+    await expect(editor).toBeVisible({ timeout: 15_000 })
+    await editor.click()
+    await page.keyboard.insertText('Saved while online')
+    await expect(editor).toContainText('Saved while online')
+
+    // Revisit the page with the network cut: the socket cannot connect, and a
+    // connecting socket must not mount an editable document from an unsynced,
+    // empty Yjs doc (the old fixed 3 s timer did exactly that). Both legs are
+    // client-side navigations so the page data stays cached while offline.
+    await page.getByRole('link', { name: 'Home' }).click()
+    await expect(
+      page.getByRole('heading', { name: /Good (morning|afternoon|evening)/ })
+    ).toBeVisible()
+    await expect(sidebarPage(page, 'Slow socket')).toBeVisible()
+    await page.context().setOffline(true)
+    await sidebarPage(page, 'Slow socket').getByRole('link', { name: 'Slow socket' }).click()
+
+    const startedAt = await page.evaluate(() => performance.now())
+    await expect
+      .poll(
+        async () =>
+          (await editor.count()) === 0 &&
+          (await page.evaluate(() => performance.now())) - startedAt > 4000,
+        { timeout: 20_000, intervals: [250] }
+      )
+      .toBe(true)
+
+    // Back online the socket reconnects, syncs, and the saved content shows.
+    await page.context().setOffline(false)
+    await expect(editor).toBeVisible({ timeout: 30_000 })
+    await expect(editor).toContainText('Saved while online')
+  })
   test('types, uses the slash menu and imports markdown', async ({
     authedPage: page,
     api,

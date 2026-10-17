@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { filterSuggestionItems } from '@blocknote/core/extensions'
 import { withCollaboration } from '@blocknote/core/yjs'
 import { BlockNoteView } from '@blocknote/mantine'
@@ -18,8 +18,26 @@ import { notionTheme } from '@/features/editor/theme'
 import { cn } from '@/lib/utils'
 import type { PageResponse } from '@/types/page'
 
-/** How long to wait for the first sync before showing the editor anyway (offline start). */
-const SYNC_WAIT_MS = 3000
+/** The page body: a BlockNote editor bound to the page's Yjs document. */
+interface DocumentEditorProps {
+  page: PageResponse
+  /** The collaboration session, or null while it connects. */
+  session: CollabSession | null
+  editable: boolean
+}
+
+/**
+ * The editor mounts only once the document is safe to show: after the first
+ * sync with the server, or when the socket has given up (offline). Mounting
+ * on a timer while it is still connecting would hand the user an empty,
+ * editable document that the real content then overwrites.
+ */
+export function DocumentEditor({ page, session, editable }: DocumentEditorProps) {
+  if (!session || !(session.synced || session.status === 'disconnected')) {
+    return <EditorSkeleton />
+  }
+  return <CollabEditor page={page} session={session} editable={editable} />
+}
 
 interface CollabEditorProps {
   page: PageResponse
@@ -120,27 +138,4 @@ function EditorSkeleton() {
       <div className="bg-hover h-4 w-3/5 rounded-[3px]" />
     </div>
   )
-}
-
-interface DocumentEditorProps {
-  page: PageResponse
-  /** The collaboration session, or null while it connects. */
-  session: CollabSession | null
-  editable: boolean
-}
-
-/**
- * The page body: a BlockNote editor bound to the page's Yjs document. It shows
- * once the first sync with the server is done (or after a short wait when the
- * socket is down), so the stored content and the editor never race.
- */
-export function DocumentEditor({ page, session, editable }: DocumentEditorProps) {
-  const [waited, setWaited] = useState(false)
-  useEffect(() => {
-    const timer = setTimeout(() => setWaited(true), SYNC_WAIT_MS)
-    return () => clearTimeout(timer)
-  }, [])
-
-  if (!session || !(session.synced || waited)) return <EditorSkeleton />
-  return <CollabEditor page={page} session={session} editable={editable} />
 }
