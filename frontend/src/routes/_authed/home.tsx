@@ -36,9 +36,9 @@ function HomePage() {
             {isLoading ? (
               <div className="bg-hover h-5 w-2/3 animate-pulse rounded-[3px]" aria-hidden="true" />
             ) : recent.length === 0 ? (
-              <div className="border-border text-subtle rounded-[6px] border border-dashed px-6 py-10 text-center">
-                <p className="text-muted-foreground text-[15px] font-medium">No recent pages yet</p>
-                <p className="mt-1 text-[13px]">
+              <div className="border-border rounded-[6px] border border-dashed px-6 py-10 text-center">
+                <p className="text-[15px] font-medium">No recent pages yet</p>
+                <p className="text-muted-foreground mt-1 text-[13px]">
                   Pages you open will show up here. Create one from the sidebar to get started.
                 </p>
               </div>

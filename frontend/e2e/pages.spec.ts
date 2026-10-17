@@ -610,3 +610,49 @@ test.describe('home (fix round 1)', () => {
     await expect(section.locator('.animate-pulse')).toHaveCount(0)
   })
 })
+
+test.describe('home (fix round 2)', () => {
+  for (const colorScheme of ['light', 'dark'] as const) {
+    test(`the empty-state hint is readable (4.5:1) in the ${colorScheme} theme`, async ({
+      authedPage: page,
+    }) => {
+      await page.emulateMedia({ colorScheme })
+      await page.goto('/home')
+      const hint = page.getByText('Pages you open will show up here', { exact: false })
+      await expect(hint).toBeVisible()
+      await expect(page.locator('html')).toHaveCSS('color-scheme', colorScheme)
+
+      const ratio = await hint.evaluate(element => {
+        const parse = (value: string) => {
+          const [r, g, b, a = 1] = (value.match(/[\d.]+/g) ?? []).map(Number)
+          return { r, g, b, a }
+        }
+        // The first painted background behind the text, walking up the tree.
+        let node: Element | null = element
+        let background = { r: 255, g: 255, b: 255, a: 1 }
+        while (node) {
+          const color = parse(getComputedStyle(node).backgroundColor)
+          if (color.a > 0) {
+            background = color
+            break
+          }
+          node = node.parentElement
+        }
+        const text = parse(getComputedStyle(element).color)
+        const mix = (channel: 'r' | 'g' | 'b') =>
+          text[channel] * text.a + background[channel] * (1 - text.a)
+        const luminance = (r: number, g: number, b: number) => {
+          const linear = (channel: number) => {
+            const value = channel / 255
+            return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+          }
+          return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+        }
+        const foreground = luminance(mix('r'), mix('g'), mix('b'))
+        const back = luminance(background.r, background.g, background.b)
+        return (Math.max(foreground, back) + 0.05) / (Math.min(foreground, back) + 0.05)
+      })
+      expect(ratio).toBeGreaterThanOrEqual(4.5)
+    })
+  }
+})
