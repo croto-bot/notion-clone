@@ -659,3 +659,36 @@ test.describe('databases: table cells (fix round 2)', () => {
     expect((await row.boundingBox())!.height).toBeGreaterThan(33)
   })
 })
+
+test.describe('databases: the table on small screens (fix round 2)', () => {
+  test('the row options button fits the phone gutter', async ({ authedPage: page, api, user }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Phone rows',
+    })
+    await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: 'Thumb row',
+    })
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(`/p/${database.id}`)
+    const button = page.getByRole('button', { name: 'Row options for Thumb row' })
+    await expect(button).toBeAttached()
+
+    const scrollerBox = await page.getByTestId('database-table').boundingBox()
+    const buttonBox = await button.boundingBox()
+    expect(scrollerBox).toBeTruthy()
+    expect(buttonBox).toBeTruthy()
+    expect(buttonBox!.x, 'the button starts inside the scroller').toBeGreaterThanOrEqual(
+      scrollerBox!.x - 0.5
+    )
+    expect(buttonBox!.x).toBeGreaterThanOrEqual(-0.5)
+    expect(buttonBox!.x + buttonBox!.width).toBeLessThanOrEqual(
+      scrollerBox!.x + scrollerBox!.width + 0.5
+    )
+  })
+})

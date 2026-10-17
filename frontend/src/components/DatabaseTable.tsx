@@ -181,7 +181,7 @@ export function DatabaseTable() {
           >
             <div role="cell" className="relative border-r">
               {editable && !isPublic && (
-                <div className="absolute top-[5px] -left-7 z-10">
+                <div className="absolute top-[5px] -left-6 z-10 md:-left-7">
                   <RowMenu row={row} />
                 </div>
               )}
