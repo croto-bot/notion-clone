@@ -146,9 +146,17 @@ export function useUpdatePage() {
       // is the freshest read, and the next event invalidation refetches.
       await queryClient.cancelQueries({ queryKey: queryKeys.pages.detail(id) })
       await queryClient.cancelQueries({ queryKey: ['pages', 'rows'] })
+      // Re-check after the awaits: a mutation that started while they ran has
+      // already written its optimistic patch, and storing this (older) server
+      // response would revert it.
+      if (context && updateMutationClock.get(id) !== context.at) return
       storePageResponse(queryClient, page)
     },
-    onError: (_error, { id }) => {
+    onError: (_error, { id }, context) => {
+      // Only the newest mutation rolls the cache back: an older failed update
+      // must not invalidate (and refetch pre-commit state) over a newer
+      // optimistic patch that is still in flight.
+      if (context && updateMutationClock.get(id) !== context.at) return
       void queryClient.invalidateQueries({ queryKey: queryKeys.pages.detail(id) })
       invalidatePageLists(queryClient)
     },
@@ -288,12 +296,19 @@ export function useSetFavorite() {
       restoreLists(queryClient, context?.snapshot)
       void queryClient.invalidateQueries({ queryKey: queryKeys.pages.detail(page.id) })
     },
-    onSettled: async (_data, _error, { page, favorite }) => {
-      // The events socket's open-flush (or any page.* event) can start a
-      // detail refetch after onMutate's cancel that still reads the
-      // pre-commit row; landing after the optimistic patch it would flip the
-      // star back (the sidebar list and the top bar disagreed). Cancel it and
-      // write the settled truth; the next invalidation refetches normally.
+    onSettled: async (_data, error, { page, favorite }) => {
+      // On error the optimistic star is wrong and onError has already queued
+      // the repair refetch: writing `is_favorite` here (or cancelling that
+      // refetch) would keep the star stuck on the refused value. Only a
+      // successful toggle writes the settled truth; the events socket's
+      // open-flush (or any page.* event) can still have started a detail
+      // refetch after onMutate's cancel that reads the pre-commit row and
+      // would flip the star back, so the success path cancels it first and
+      // the next invalidation refetches normally.
+      if (error) {
+        void queryClient.invalidateQueries({ queryKey: ['pages', 'favorites'] })
+        return
+      }
       await queryClient.cancelQueries({ queryKey: queryKeys.pages.detail(page.id) })
       queryClient.setQueryData<PageResponse>(queryKeys.pages.detail(page.id), old =>
         old ? { ...old, is_favorite: favorite } : old

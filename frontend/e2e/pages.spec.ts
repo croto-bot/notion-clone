@@ -6,6 +6,7 @@ import {
   authHeaders,
   createPage,
   ensureWorkspace,
+  errorToast,
   favoritePage,
   FRONTEND_URL,
   getPage,
@@ -102,6 +103,56 @@ test.describe('pages (F4, F8, F9, F11, F12)', () => {
     await expect(sidebar(page).getByRole('region', { name: 'Favorites' })).toBeHidden()
     await favoritePage(api, user, note.id)
     expect((await listFavorites(api, user, workspace.id)).map(item => item.id)).toContain(note.id)
+  })
+
+  test('a refused favorite toggle rolls the star back', async ({ loginAs, api, user }) => {
+    // A viewer may read and comment but not favorite: the server refuses the
+    // PUT with 403. The optimistic star must come back off (and stay off):
+    // writing the refused value into the cache, or cancelling the repair
+    // refetch, would leave it stuck on.
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'View only' })
+    const viewer = await registerUser(api, uniqueEmail('viewer'), PASSWORD, 'Vic Viewer')
+    await addMember(api, user, workspace.id, viewer, 'viewer')
+    const other = await loginAs(viewer)
+    await other.goto(`/p/${note.id}`)
+
+    const star = other.getByRole('button', { name: /^(Add to|Remove from) Favorites$/ })
+    await expect(star).toBeVisible({ timeout: 15_000 })
+    await star.click()
+    await expect(errorToast(other)).toHaveCount(1)
+
+    // The refused toggle ends where it started: star off, nothing favorited.
+    await expect(star).toHaveAttribute('aria-pressed', 'false')
+    await expect(star).toHaveAccessibleName('Add to Favorites')
+    expect((await listFavorites(api, viewer, workspace.id)).map(item => item.id)).toEqual([])
+  })
+
+  test('a failed rename does not roll back the fix typed right after it', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    // A title over the server's 4096-char limit fails with a real 422 while
+    // the correction typed right behind it is still in flight. The failed
+    // update's rollback (an invalidation and refetch of pre-commit state)
+    // must never land over the newer edit: the title ends at what the user
+    // last typed, in the UI and on the server.
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Rename me' })
+    await page.goto(`/p/${note.id}`)
+    const title = page.getByLabel('Page title')
+    await expect(title).toBeVisible({ timeout: 15_000 })
+
+    await title.fill('X'.repeat(5000))
+    await title.press('Enter')
+    await title.fill('Fixed name')
+    await title.press('Enter')
+    await expect(errorToast(page)).toHaveCount(1)
+
+    await expect(title).toHaveValue('Fixed name')
+    await expect(sidebarPage(page, 'Fixed name')).toBeVisible()
+    await expect.poll(async () => (await getPage(api, user, note.id)).title).toBe('Fixed name')
   })
 
   test('trashes a page, restores it, then deletes it forever', async ({
