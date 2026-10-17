@@ -13,7 +13,9 @@ from tests.e2e.helpers import (
     create_page,
     create_workspace,
     doc_with_text,
+    held_db_lock,
     make_member,
+    wait_for_blocked_queries,
 )
 
 if TYPE_CHECKING:
@@ -71,11 +73,18 @@ def test_duplicate_copies_children_and_settings(auth_client: httpx.Client) -> No
 
 
 def test_concurrent_duplicates_of_one_page_all_land(
-    auth_client: httpx.Client, make_client: Callable[..., httpx.Client]
+    auth_client: httpx.Client,
+    make_client: Callable[..., httpx.Client],
+    db: Database,
 ) -> None:
     """Two duplicates started together both land, with distinct positions.
 
-    Each copy is a live sibling of the source. Both requests are 201, never
+    The interleaving is forced: the workspace tree lock is held from here,
+    both duplicates start, and pg_stat_activity proves both are parked on
+    that lock before it is released. Serialized behind it, the second
+    duplicate reads the first copy's committed position and writes its own
+    key. If duplicate_page stops taking the workspace lock, nothing parks
+    the requests and this test fails its wait. Both requests are 201, never
     500, and the three rows do not share a position key. Each thread uses
     its own client: one connection pool shared across threads is not safe.
     """
@@ -83,18 +92,22 @@ def test_concurrent_duplicates_of_one_page_all_land(
     source = create_page(auth_client, workspace["id"], title="Original")
     token = auth_client.headers["Authorization"].removeprefix("Bearer ")
     responses: list[httpx.Response] = []
-    barrier = threading.Barrier(2)
 
     def _duplicate(client: httpx.Client) -> None:
-        barrier.wait(timeout=10)
         responses.append(client.post(f"/pages/{source['id']}/duplicate"))
 
-    threads = [
-        threading.Thread(target=_duplicate, args=(make_client(token),))
-        for _ in range(2)
-    ]
-    for thread in threads:
-        thread.start()
+    with held_db_lock(
+        db,
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        (workspace["id"],),
+    ):
+        threads = [
+            threading.Thread(target=_duplicate, args=(make_client(token),))
+            for _ in range(2)
+        ]
+        for thread in threads:
+            thread.start()
+        wait_for_blocked_queries(db, count=2, needle="pg_advisory_xact_lock")
     for thread in threads:
         thread.join(timeout=30)
 

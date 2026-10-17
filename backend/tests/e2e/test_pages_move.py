@@ -337,59 +337,6 @@ def test_four_overlapping_moves_cannot_write_a_cycle(
         _one_move_ring(auth_client, make_client, db)
 
 
-def test_root_move_racing_a_trash_of_the_page(
-    auth_client: httpx.Client, make_client: Callable[..., httpx.Client]
-) -> None:
-    """A move to the root and a trash of that page must serialize.
-
-    A root move used to take no lock and no fresh deleted_at check, so it
-    could return 200 for a page the trash had already committed. Each
-    request is 200 or 400 page_in_trash (the trash is 204), never 500. A
-    200 move reports the page still live. The page ends trashed, at the
-    root only if the move won.
-    """
-    workspace = create_workspace(auth_client)
-    parent = create_page(auth_client, workspace["id"], title="Parent")
-    page = create_page(
-        auth_client, workspace["id"], parent_id=parent["id"], title="Mover"
-    )
-    token = auth_client.headers["Authorization"].removeprefix("Bearer ")
-    box: dict[str, httpx.Response] = {}
-    barrier = threading.Barrier(2)
-
-    def _move(client: httpx.Client) -> None:
-        barrier.wait(timeout=10)
-        box["move"] = client.post(f"/pages/{page['id']}/move", json={"parent_id": None})
-
-    def _trash(client: httpx.Client) -> None:
-        barrier.wait(timeout=10)
-        box["trash"] = client.delete(f"/pages/{page['id']}")
-
-    threads = [
-        threading.Thread(target=_move, args=(make_client(token),)),
-        threading.Thread(target=_trash, args=(make_client(token),)),
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=30)
-
-    moved = box["move"]
-    trashed = box["trash"]
-    assert trashed.status_code == 204, trashed.text
-    assert moved.status_code in (200, 400), moved.text
-    if moved.status_code == 400:
-        assert moved.json()["error_code"] == "page_in_trash"
-    else:
-        assert moved.json()["deleted_at"] is None, moved.text
-    now = auth_client.get(f"/pages/{page['id']}").json()
-    assert now["deleted_at"] is not None
-    if moved.status_code == 400:
-        assert now["parent_id"] == parent["id"]
-    else:
-        assert now["parent_id"] is None
-
-
 def test_root_move_sees_a_trash_that_commits_while_it_waits(
     auth_client: httpx.Client, make_client: Callable[..., httpx.Client], db: Database
 ) -> None:
