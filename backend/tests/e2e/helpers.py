@@ -295,9 +295,7 @@ def wait_for_blocked_queries(
         if len(rows) >= count:
             return
         time.sleep(0.05)
-    raise AssertionError(
-        f"{count} blocked queries matching {needle!r} never appeared"
-    )
+    raise AssertionError(f"{count} blocked queries matching {needle!r} never appeared")
 
 
 # --- WebSocket helpers (the collab and events sockets) ------------------------

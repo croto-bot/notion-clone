@@ -177,19 +177,38 @@ class PageService(BaseService[Page]):
 
     # --- helpers ----------------------------------------------------------------
 
-    async def _breadcrumbs(self, page: Page) -> list[Breadcrumb]:
-        chain: list[Breadcrumb] = []
-        current = page
-        depth = 0
-        while current.parent_id is not None and depth < 100:
-            parent = await self.repo.get(current.parent_id, raise_error=False)
+    async def _ancestor_chain(
+        self,
+        start_id: uuid.UUID | None,
+        load: Callable[[uuid.UUID], Awaitable[Page | None]],
+    ) -> list[Page]:
+        """A page's parents, nearest first, through one shared walker.
+
+        The visited set stops the walk when the rows contain a parent cycle
+        (two concurrent moves could write one before the row locks existed):
+        a cycled tree yields its pages' parents once, not an endless chain.
+        """
+        chain: list[Page] = []
+        seen: set[uuid.UUID] = set()
+        current_id = start_id
+        while current_id is not None and current_id not in seen:
+            seen.add(current_id)
+            parent = await load(current_id)
             if parent is None:
                 break
-            chain.append(Breadcrumb(id=parent.id, title=parent.title, icon=parent.icon))
-            current = parent
-            depth += 1
-        chain.reverse()
+            chain.append(parent)
+            current_id = parent.parent_id
         return chain
+
+    async def _breadcrumbs(self, page: Page) -> list[Breadcrumb]:
+        chain = await self._ancestor_chain(
+            page.parent_id,
+            lambda parent_id: self.repo.get(parent_id, raise_error=False),
+        )
+        return [
+            Breadcrumb(id=parent.id, title=parent.title, icon=parent.icon)
+            for parent in reversed(chain)
+        ]
 
     async def _has_children(self, page_id: uuid.UUID) -> bool:
         return await self.repo.has_child(page_id)
@@ -222,15 +241,21 @@ class PageService(BaseService[Page]):
     def _breadth_first(
         nodes: dict[uuid.UUID, Page], root_id: uuid.UUID
     ) -> list[uuid.UUID]:
-        """Parents before children, so one INSERT satisfies the self-FK."""
+        """Parents before children, so one INSERT satisfies the self-FK.
+
+        The visited set stops the walk when the rows contain a parent cycle:
+        each node is emitted once, however the parent edges loop.
+        """
         order: list[uuid.UUID] = []
         queue = [root_id]
+        seen = {root_id}
         while queue:
             current = queue.pop(0)
             order.append(current)
-            queue.extend(
-                node_id for node_id, node in nodes.items() if node.parent_id == current
-            )
+            for node_id, node in nodes.items():
+                if node.parent_id == current and node_id not in seen:
+                    seen.add(node_id)
+                    queue.append(node_id)
         return order
 
     @staticmethod
@@ -714,6 +739,10 @@ class PageService(BaseService[Page]):
         parent_ids = {
             page.parent_id for page in live.values() if page.parent_id is not None
         }
+
+        async def _live_parent(parent_id: uuid.UUID) -> Page | None:
+            return live.get(parent_id)
+
         entries = []
         for page in pages:
             content = page.content_text or ""
@@ -721,19 +750,15 @@ class PageService(BaseService[Page]):
                 snippet = _snippet(page.title, query)
             else:
                 snippet = _snippet(content, query)
-            chain: list[Breadcrumb] = []
-            current = live.get(page.parent_id) if page.parent_id else None
-            while current is not None:
-                chain.append(
-                    Breadcrumb(id=current.id, title=current.title, icon=current.icon)
-                )
-                current = live.get(current.parent_id) if current.parent_id else None
-            chain.reverse()
+            chain = await self._ancestor_chain(page.parent_id, _live_parent)
             entries.append(
                 SearchEntry(
                     page=page,
                     snippet=snippet,
-                    breadcrumbs=chain,
+                    breadcrumbs=[
+                        Breadcrumb(id=parent.id, title=parent.title, icon=parent.icon)
+                        for parent in reversed(chain)
+                    ],
                     has_children=page.id in parent_ids,
                 )
             )

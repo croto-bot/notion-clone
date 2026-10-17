@@ -114,6 +114,45 @@ def test_concurrent_duplicates_of_one_page_all_land(
     assert len({row[0] for row in rows}) == 3, rows
 
 
+def test_duplicate_and_search_return_in_a_cycled_tree(
+    auth_client: httpx.Client, db: Database
+) -> None:
+    """A parent cycle must not hang duplicate, search or the breadcrumbs.
+
+    Two overlapping moves could write A -> B -> A before the row locks
+    existed; the db fixture inserts that cycle directly. Every walk over a
+    cycled tree must stop (a visited set) and return: duplicate copies, the
+    search's breadcrumb walk and the page detail's breadcrumbs all come
+    back, instead of spinning forever or filling 100 garbage entries.
+    """
+    workspace = create_workspace(auth_client)
+    a = create_page(auth_client, workspace["id"], title="Cycle A")
+    b = create_page(auth_client, workspace["id"], parent_id=a["id"], title="Cycle B")
+    # B is under A; force A under B: the tree is now the cycle A -> B -> A.
+    assert db.execute(
+        "UPDATE pages SET parent_id = %s WHERE id = %s", (b["id"], a["id"])
+    )
+
+    duplicated = auth_client.post(f"/pages/{a['id']}/duplicate")
+    assert duplicated.status_code == 201, duplicated.text
+
+    searched = auth_client.get(
+        f"/workspaces/{workspace['id']}/search", params={"q": "Cycle"}
+    )
+    assert searched.status_code == 200, searched.text
+    assert len(searched.json()) >= 2
+    for result in searched.json():
+        ids = [crumb["id"] for crumb in result["breadcrumbs"]]
+        assert len(ids) == len(set(ids))  # every parent appears once: no loop
+        assert len(ids) <= 4  # the walk stops at the four live pages
+
+    detail = auth_client.get(f"/pages/{b['id']}")
+    assert detail.status_code == 200, detail.text
+    crumb_ids = [crumb["id"] for crumb in detail.json()["breadcrumbs"]]
+    assert len(crumb_ids) == len(set(crumb_ids))
+    assert len(crumb_ids) <= 4
+
+
 def test_duplicate_copies_the_yjs_document(auth_client: httpx.Client) -> None:
     workspace = create_workspace(auth_client)
     source = create_page(auth_client, workspace["id"], title="With content")

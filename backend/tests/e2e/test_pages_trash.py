@@ -250,14 +250,10 @@ def test_restore_re_keys_when_a_live_sibling_took_the_position(
     """
     workspace = create_workspace(auth_client)
     parent = create_page(auth_client, workspace["id"], title="Parent")
-    c1 = create_page(
-        auth_client, workspace["id"], parent_id=parent["id"], title="C1"
-    )
+    c1 = create_page(auth_client, workspace["id"], parent_id=parent["id"], title="C1")
     assert auth_client.delete(f"pages/{c1['id']}").status_code == 204
     # C1's key is free while it is trashed: C2 takes it.
-    c2 = create_page(
-        auth_client, workspace["id"], parent_id=parent["id"], title="C2"
-    )
+    c2 = create_page(auth_client, workspace["id"], parent_id=parent["id"], title="C2")
     assert c2["position"] == c1["position"]
 
     response = auth_client.post(f"pages/{c1['id']}/restore")
