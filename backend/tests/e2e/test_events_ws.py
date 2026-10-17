@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import time
 from typing import TYPE_CHECKING
 
 from pycrdt import XmlElement, XmlFragment, XmlText
@@ -234,6 +236,45 @@ def test_collab_save_drops_a_non_uuid_client_id(
 
     assert event["type"] == "page.updated"
     assert "client_id" not in event
+
+
+def test_put_document_with_an_open_room_publishes_once(
+    server: LiveServer, auth_client: httpx.Client
+) -> None:
+    """The PUT and the room's flush of the same change are one `page.updated`."""
+    workspace = create_workspace(auth_client)
+    page = create_page(auth_client, workspace["id"])
+    tab = "33333333-3333-4333-8333-333333333333"
+    events = _events_url(server, workspace["id"], _token_of(auth_client))
+    collab = (
+        f"{server.base_url.replace('http://', 'ws://')}"
+        f"/pages/{page['id']}/collab?token={_token_of(auth_client)}"
+    )
+    _doc, update = doc_with_text("put while the room is open")
+
+    with connect(events, open_timeout=5) as socket:
+        with connect(collab, open_timeout=5) as conn:
+            doc, _ = doc_with_text()
+            yjs_sync(conn, doc)
+            response = auth_client.put(
+                f"/pages/{page['id']}/document",
+                json={"state": base64.b64encode(update).decode()},
+                headers={"X-Client-Id": tab},
+            )
+            assert response.status_code == 200, response.text
+            # Longer than two flush intervals: a second event would be here.
+            received: list[dict[str, str]] = []
+            deadline = time.monotonic() + 3
+            while (left := deadline - time.monotonic()) > 0:
+                try:
+                    received.append(json.loads(socket.recv(timeout=left)))
+                except TimeoutError:
+                    break
+
+    updates = [event for event in received if event["type"] == "page.updated"]
+    assert len(updates) == 1, received
+    assert updates[0]["page_id"] == page["id"]
+    assert updates[0]["client_id"] == tab
 
 
 def test_bad_token_closes_4401(server: LiveServer, auth_client: httpx.Client) -> None:

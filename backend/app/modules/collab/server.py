@@ -178,17 +178,19 @@ class CollabServer:
             return None
         return room.ydoc.get_update()
 
-    def apply_external_update(self, page_id: uuid.UUID, update: bytes) -> None:
+    def apply_external_update(self, page_id: uuid.UUID, update: bytes) -> bool:
         """Feed an out-of-band update (PUT /pages/{id}/document) to the room.
 
         The room then broadcasts it to its clients and the flush loop stores
-        it like any other change. A page without a room needs nothing: the
-        caller wrote the database directly.
+        it like any other change, publishing ``page.updated`` for it. Returns
+        whether that flush is due. A page without a room, or an update the
+        room already held, needs nothing: the caller wrote the database
+        directly and publishes itself.
         """
-        if not update:
-            return
-        if room := self._server.rooms.get(str(page_id)):
+        name = str(page_id)
+        if update and (room := self._server.rooms.get(name)):
             room.ydoc.apply_update(update)
+        return name in self._dirty
 
     def note_write(
         self,
