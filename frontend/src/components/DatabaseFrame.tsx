@@ -172,7 +172,7 @@ function ViewTabs() {
               aria-selected={active}
               onClick={() => setActiveView(item.id)}
               className={cn(
-                'flex h-7 max-w-[160px] items-center gap-1.5 rounded-[4px] px-2 text-[14px] transition-colors duration-75',
+                'flex h-7 max-w-[160px] items-center gap-1.5 rounded-[4px] px-2 text-[14px] transition-colors duration-100',
                 active ? 'bg-selected font-medium' : 'text-muted-foreground hover:bg-hover'
               )}
             >

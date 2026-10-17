@@ -21,7 +21,7 @@ import { toastApiError } from '@/lib/error-handler'
 import { cn } from '@/lib/utils'
 
 const itemClass =
-  'flex min-h-[30px] w-full items-center gap-2.5 rounded-[4px] px-2 py-1 text-left text-[14px] transition-colors duration-75 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none'
+  'flex min-h-[30px] w-full items-center gap-2.5 rounded-[4px] px-2 py-1 text-left text-[14px] transition-colors duration-100 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none'
 
 function NewWorkspaceDialog({
   open,
@@ -97,7 +97,7 @@ export function WorkspaceSwitcher() {
           <button
             type="button"
             aria-label="Switch workspace"
-            className="hover:bg-hover data-[state=open]:bg-hover-strong flex h-[30px] min-w-0 items-center gap-2 rounded-[4px] px-2 text-[14px] font-medium transition-colors duration-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            className="hover:bg-hover data-[state=open]:bg-hover-strong flex h-[30px] max-w-full min-w-0 items-center gap-2 rounded-[4px] px-2 text-[14px] font-medium transition-colors duration-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           >
             <WorkspaceIcon name={workspace.name} icon={workspace.icon} size={20} />
             <span className="truncate" data-testid="workspace-name">

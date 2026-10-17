@@ -89,6 +89,7 @@ make pre-commit-install       # ruff, frontend eslint + prettier, demo-script pr
 | `frontend/package.json`, `frontend/bun.lock` | npm dependencies (exact pins), scripts, lint-staged config |
 | `frontend/playwright.config.ts`, `frontend/eslint.config.js`, `frontend/vite.config.ts` | Test stack, lint rules (incl. no-mock rules), build |
 | `scripts/demo/` | README video recorder: `stack.sh up` and `stack.sh down` (a throwaway stack on ports 57732, 57195, 57400), `record.ts` (seed, film, encode), `check.sh` (format + frames), `tsconfig.json` (for `make demo-check`). Run with `make demo-videos`. Not a test suite |
+| `docs/notion-parity.md` | The Notion values the UI must match (type, colors, metrics, motion). `frontend/e2e/parity.spec.ts` measures them in light and dark |
 | `docs/media/` | The README demo videos (`*.mp4`) and their GIF previews, written by `scripts/demo/record.ts` |
 
 ## Testing: end-to-end only

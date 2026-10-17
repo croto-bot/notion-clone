@@ -157,7 +157,7 @@ export function FilterPopover() {
           type="button"
           aria-label={filters.length ? `Filter, ${filters.length} active` : 'Filter'}
           className={cn(
-            'hover:bg-hover data-[state=open]:bg-hover-strong flex h-7 items-center gap-1.5 rounded-[4px] px-2 text-[14px] transition-colors duration-75',
+            'hover:bg-hover data-[state=open]:bg-hover-strong flex h-7 items-center gap-1.5 rounded-[4px] px-2 text-[14px] transition-colors duration-100',
             filters.length > 0 ? 'text-primary font-medium' : 'text-muted-foreground'
           )}
         >

@@ -95,4 +95,6 @@ No unit tests, no Vitest/Jest/Testing Library, no mocks, no `page.route()` or ot
 - `e2e/guards.spec.ts` fails when a page is never opened (`page.goto` / `toHaveURL`), an `API` endpoint is never used by a spec or fixture, or a mock library is in `package.json`. ESLint fails on network stubbing (incl. CDP sessions), `waitForTimeout`, `test.skip/only/fixme`, a `retries` override and imports of `@playwright/test` outside `fixtures.ts`.
 - Failed test: trace and screenshot in `test-results/<test>/`; open with `bunx playwright show-trace <trace.zip>`.
 
+- `e2e/parity.spec.ts` measures the Notion values in `../docs/notion-parity.md` (computed styles and boxes, light and dark). Change a look-and-feel value in that table and in the spec together. `PARITY_SHOTS_DIR=/some/dir bun run test:e2e e2e/parity.spec.ts` also saves one screenshot per surface and theme.
+
 Full guide: `../.claude/skills/project-standards/references/e2e-testing.md`.

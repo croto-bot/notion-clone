@@ -148,7 +148,7 @@ export function DatabaseTable() {
                 <PropertyMenu property={property}>
                   <button
                     type="button"
-                    className="text-muted-foreground hover:bg-hover flex h-[33px] w-full min-w-0 items-center gap-1.5 px-2 text-left text-[14px] font-medium transition-colors duration-75 [&_svg]:size-4 [&_svg]:shrink-0"
+                    className="text-muted-foreground hover:bg-hover flex h-[33px] w-full min-w-0 items-center gap-1.5 px-2 text-left text-[14px] font-medium transition-colors duration-100 [&_svg]:size-4 [&_svg]:shrink-0"
                   >
                     <PropertyIcon type={property.type} />
                     <span className="truncate">{property.name}</span>
@@ -162,7 +162,7 @@ export function DatabaseTable() {
               <button
                 type="button"
                 aria-label="Add a property"
-                className="text-muted-foreground hover:bg-hover grid h-[33px] place-items-center transition-colors duration-75"
+                className="text-muted-foreground hover:bg-hover grid h-[33px] place-items-center transition-colors duration-100"
               >
                 <Plus className="size-4" />
               </button>
@@ -201,7 +201,7 @@ export function DatabaseTable() {
             type="button"
             aria-label="Add a row"
             onClick={() => void createRow()}
-            className="text-subtle hover:bg-hover flex h-[33px] w-full items-center gap-2 border-b px-2 text-left text-[14px] transition-colors duration-75"
+            className="text-subtle hover:bg-hover flex h-[33px] w-full items-center gap-2 border-b px-2 text-left text-[14px] transition-colors duration-100"
             style={{ minWidth: width }}
           >
             <Plus className="size-4" />

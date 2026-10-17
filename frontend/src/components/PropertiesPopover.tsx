@@ -26,7 +26,7 @@ export function PropertiesPopover() {
           <button
             type="button"
             aria-label="Properties"
-            className="text-muted-foreground hover:bg-hover data-[state=open]:bg-hover-strong grid h-7 w-7 place-items-center rounded-[4px] transition-colors duration-75"
+            className="text-muted-foreground hover:bg-hover data-[state=open]:bg-hover-strong grid h-7 w-7 place-items-center rounded-[4px] transition-colors duration-100"
           >
             <SlidersHorizontal className="size-4" />
           </button>

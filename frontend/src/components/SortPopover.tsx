@@ -33,7 +33,7 @@ export function SortPopover() {
           type="button"
           aria-label={sorts.length ? `Sort, ${sorts.length} active` : 'Sort'}
           className={cn(
-            'hover:bg-hover data-[state=open]:bg-hover-strong flex h-7 items-center gap-1.5 rounded-[4px] px-2 text-[14px] transition-colors duration-75',
+            'hover:bg-hover data-[state=open]:bg-hover-strong flex h-7 items-center gap-1.5 rounded-[4px] px-2 text-[14px] transition-colors duration-100',
             sorts.length > 0 ? 'text-primary font-medium' : 'text-muted-foreground'
           )}
         >

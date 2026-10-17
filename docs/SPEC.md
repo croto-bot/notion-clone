@@ -172,6 +172,7 @@ frontend page, tests) is removed: this is a product, not a template.
 - **Cover picker**: preset gradients and colors (no external images), plus "Link" (URL).
 - Every popover / menu / modal closes on Escape and outside click and has keyboard focus.
 - Animations: 100-200 ms ease for hovers, menus and the sidebar.
+- The measured values (and where Noted differs from Notion on purpose) are in [notion-parity.md](notion-parity.md); `frontend/e2e/parity.spec.ts` enforces them.
 
 ## 5. Testing
 

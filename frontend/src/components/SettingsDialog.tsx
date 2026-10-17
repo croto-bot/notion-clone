@@ -554,7 +554,7 @@ export function SettingsDialog() {
       <DialogContent
         showCloseButton
         aria-describedby={undefined}
-        className="flex h-[min(700px,calc(100vh-48px))] w-[min(1040px,calc(100vw-48px))] max-w-none gap-0 overflow-hidden p-0 sm:max-w-none"
+        className="flex h-[min(715px,calc(100vh-100px))] w-[min(1150px,calc(100vw-100px))] max-w-none gap-0 overflow-hidden p-0 sm:max-w-none"
       >
         <DialogTitle className="sr-only">Settings</DialogTitle>
         <DialogDescription className="sr-only">

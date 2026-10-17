@@ -50,6 +50,7 @@
     Lyon-Text, Georgia, YuMincho, 'Yu Mincho', 'Hiragino Mincho ProN', 'Noto Serif CJK KR',
     'Noto Serif CJK JP', 'Noto Serif CJK SC', ui-serif, serif;
   --font-mono: iawriter-mono, Nitti, Menlo, Courier, monospace;
+  --font-code: SFMono-Regular, Menlo, Consolas, 'PT Mono', 'Liberation Mono', Courier, monospace;
 }
 
 /* Notion light theme (default). */
@@ -136,8 +137,8 @@
   --banner: rgb(235, 87, 87);
 
   --menu-shadow:
-    rgba(15, 15, 15, 0.2) 0 0 0 1px, rgba(15, 15, 15, 0.4) 0 3px 6px,
-    rgba(15, 15, 15, 0.6) 0 9px 24px;
+    rgba(15, 15, 15, 0.2) 0 0 0 1px, rgba(15, 15, 15, 0.2) 0 3px 6px,
+    rgba(15, 15, 15, 0.4) 0 9px 24px;
   --modal-shadow:
     rgba(15, 15, 15, 0.2) 0 0 0 1px, rgba(15, 15, 15, 0.4) 0 5px 12px,
     rgba(15, 15, 15, 0.6) 0 20px 48px;

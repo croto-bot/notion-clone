@@ -123,14 +123,17 @@ function SharePage() {
       {cover && (
         <div
           data-testid="page-cover"
-          className="h-[30vh] max-h-[280px] min-h-[160px] w-full"
+          className="h-[30vh] w-full"
           style={coverBackground(cover, page.cover_position)}
         />
       )}
       <div className={column}>
         {page.icon ? (
-          <div className={cn('relative z-10 h-[78px]', hasCover ? '-mt-[39px]' : 'mt-[56px]')}>
-            <PageIcon icon={page.icon} size={78} className="!text-[66px]" />
+          <div
+            data-testid="page-icon"
+            className={cn('relative z-10 size-[78px]', hasCover ? '-mt-[39px]' : 'mt-[56px]')}
+          >
+            <PageIcon icon={page.icon} size={78} emojiScale={1} />
           </div>
         ) : (
           <div className={hasCover ? 'h-[24px]' : 'h-[72px]'} />

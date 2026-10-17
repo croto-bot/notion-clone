@@ -4,6 +4,7 @@ import { ImagePlus, MessageSquarePlus, SmilePlus } from 'lucide-react'
 import { CoverPicker } from '@/components/CoverPicker'
 import { Discussions } from '@/components/Discussions'
 import { EmojiPicker } from '@/components/EmojiPicker'
+import { PageIcon } from '@/components/PageIcon'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { usePageEditorApi } from '@/contexts/PageEditorContext'
 import { usePageActions } from '@/hooks/usePageActions'
@@ -63,7 +64,7 @@ function Cover({ page, editable }: { page: PageResponse; editable: boolean }) {
       ref={box}
       data-testid="page-cover"
       className={cn(
-        'group/cover relative h-[30vh] max-h-[280px] min-h-[160px] w-full shrink-0',
+        'group/cover relative h-[30vh] w-full shrink-0',
         repositioning && 'cursor-grab active:cursor-grabbing'
       )}
       style={coverBackground(page.cover, position)}
@@ -291,9 +292,9 @@ export function PageHeader({ page, editable }: PageHeaderProps) {
                   aria-label="Change page icon"
                   disabled={!editable}
                   data-testid="page-icon"
-                  className="hover:bg-hover pointer-events-auto flex size-[78px] items-center justify-center rounded-[6px] text-[66px] leading-none transition-colors duration-100 disabled:hover:bg-transparent"
+                  className="hover:bg-hover pointer-events-auto flex size-[78px] items-center justify-center rounded-[6px] transition-colors duration-100 disabled:hover:bg-transparent"
                 >
-                  {page.icon}
+                  <PageIcon icon={page.icon} size={78} emojiScale={1} />
                 </button>
               </PopoverTrigger>
               <PopoverContent align="start" className="w-auto p-0">
