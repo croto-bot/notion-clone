@@ -42,3 +42,19 @@ def test_alembic_refuses_a_database_url_that_is_not_postgres(db: Database) -> No
     assert result.returncode != 0
     assert "DB_URL must be a Postgres URL" in result.stderr
     assert db.fetch_one("SELECT count(*) FROM alembic_version") == (1,)
+
+
+def test_order_keys_sort_by_byte_order(db: Database) -> None:
+    """Sibling and favorite order keys compare byte by byte, on any server locale.
+
+    The keys are fractional indexes such as ``Zz`` < ``a0`` (the frontend
+    compares them the same way). A language collation such as ``en_US`` sorts
+    ``Zz`` after ``a0``, so a page added on top would show at the bottom.
+    """
+    rows = db.fetch_all(
+        "SELECT table_name, collation_name FROM information_schema.columns "
+        "WHERE column_name = 'position' AND table_name IN ('pages', 'page_favorites') "
+        "ORDER BY table_name"
+    )
+
+    assert rows == [("page_favorites", "C"), ("pages", "C")]

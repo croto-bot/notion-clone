@@ -74,7 +74,9 @@ class Page(TimestampMixin, Base):
     icon: Mapped[str | None] = mapped_column(String(64), default=None)
     cover: Mapped[str | None] = mapped_column(Text, default=None)
     cover_position: Mapped[int] = mapped_column(Integer, default=50)
-    position: Mapped[str] = mapped_column(String(255), default="a0")
+    # Order keys compare byte by byte (as the frontend does), whatever the
+    # server's locale: en_US would sort "Zz" after "a0".
+    position: Mapped[str] = mapped_column(String(255, collation="C"), default="a0")
     full_width: Mapped[bool] = mapped_column(Boolean, default=False)
     small_text: Mapped[bool] = mapped_column(Boolean, default=False)
     locked: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -114,7 +116,9 @@ class PageFavorite(TimestampMixin, Base):
     page_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("pages.id", ondelete="CASCADE"), index=True
     )
-    position: Mapped[str] = mapped_column(String(255), default="a0")
+    # Order keys compare byte by byte (as the frontend does), whatever the
+    # server's locale: en_US would sort "Zz" after "a0".
+    position: Mapped[str] = mapped_column(String(255, collation="C"), default="a0")
 
 
 class PageVisit(TimestampMixin, Base):
