@@ -112,7 +112,7 @@ How to write a test, fixtures and guards: `.claude/skills/project-standards/refe
 | `make check` | Every static check, no file changes: ruff, ESLint, prettier, `tsc`, build, and `make demo-check` (prettier + `tsc` on `scripts/demo/`) |
 | `make ci` | `make check` + `make test` |
 
-Measured coverage (2026-10-17): backend 95.32% lines and 80.91% branches, frontend `src/` 98.49% lines. README [Coverage](README.md#coverage) lists the lines no test runs and why. A new uncovered line needs a test, or a reason in that table.
+Measured coverage (2026-10-17): backend 95.32% lines and 80.91% branches, frontend `src/` 98.43% lines. README [Coverage](README.md#coverage) lists the lines no test runs and why. A new uncovered line needs a test, or a reason in that table.
 
 The test suites use their own ports (Postgres 55432, backend 59095, frontend 53000) and never touch the dev stack. The e2e frontend turns off the TanStack devtools event bus (fixed port 42069), so `bun run dev` can stay up.
 

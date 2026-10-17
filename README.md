@@ -57,7 +57,7 @@ Open http://localhost:3000 and create an account. The API is on http://localhost
 
 ## Testing
 
-Every test drives the real system: there are no unit tests and no mocks. The backend suite sends HTTP and WebSocket requests to a live server on a real Postgres. The browser suite runs Playwright against the real frontend, backend and database, including two people editing one page. `make test` runs both suites, and [Tests](#tests) has the details. The coverage is measured, not claimed: the backend suite runs 95.32% of the backend's lines and the browser suite runs 98.49% of `frontend/src/` ([Coverage](#coverage)).
+Every test drives the real system: there are no unit tests and no mocks. The backend suite sends HTTP and WebSocket requests to a live server on a real Postgres. The browser suite runs Playwright against the real frontend, backend and database, including two people editing one page. `make test` runs both suites, and [Tests](#tests) has the details. The coverage is measured, not claimed: the backend suite runs 95.32% of the backend's lines and the browser suite runs 98.43% of `frontend/src/` ([Coverage](#coverage)).
 
 **Working with an AI agent?** It starts at [AGENTS.md](AGENTS.md). Code standards for agents and people: `.claude/skills/project-standards/SKILL.md`.
 
@@ -174,9 +174,9 @@ Measured on 2026-10-17:
 | Suite | Command | Tests | Lines | Branches |
 |---|---|---|---|---|
 | Backend (`backend/app/`, the live server process included) | `make test-backend-cov` | 304 | 95.32% (3405 of 3572) | 80.91% (500 of 618) |
-| Browser (`frontend/src/`) | `make test-e2e-cov` | 151 | 98.49% (3531 of 3585) | 85.99% (1855 of 2157) |
+| Browser (`frontend/src/`) | `make test-e2e-cov` | 151 | 98.43% (3529 of 3585) | 85.95% (1854 of 2157) |
 
-The backend report is `backend/htmlcov/index.html`. The browser report is `frontend/coverage/index.html` (also `lcov.info` and `coverage-summary.json`): Playwright's `page.coverage` records the V8 coverage of every page, and `monocart-coverage-reports` maps it to `src/` through the Vite dev server's source maps. A `src/` file that no test loads counts as 0%. `E2E_COVERAGE=1` makes the browser slower, so in that mode each test and each `expect` gets three times as long.
+The backend report is `backend/htmlcov/index.html`. The browser report is `frontend/coverage/index.html` (also `lcov.info` and `coverage-summary.json`): Playwright's `page.coverage` records the V8 coverage of every page, and `monocart-coverage-reports` maps it to `src/` through the Vite dev server's source maps. A `src/` file that no test loads counts as 0%. A few paths depend on timing (a socket that reconnects, a request that loses a race), so the browser numbers can move by a few lines from run to run. `E2E_COVERAGE=1` makes the browser slower, so in that mode each test and each `expect` gets three times as long.
 
 The lines no test runs, and why:
 
