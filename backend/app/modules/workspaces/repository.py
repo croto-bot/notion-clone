@@ -28,9 +28,13 @@ class WorkspaceMemberRepository(SQLAlchemyRepository[WorkspaceMember]):
     async def get_membership(
         self, workspace_id: uuid.UUID, user_id: uuid.UUID
     ) -> WorkspaceMember | None:
-        statement = select(WorkspaceMember).where(
-            WorkspaceMember.workspace_id == workspace_id,
-            WorkspaceMember.user_id == user_id,
+        statement = (
+            select(WorkspaceMember)
+            .where(
+                WorkspaceMember.workspace_id == workspace_id,
+                WorkspaceMember.user_id == user_id,
+            )
+            .execution_options(populate_existing=True)
         )
         result = await self._session.execute(statement)
         return result.scalar_one_or_none()
