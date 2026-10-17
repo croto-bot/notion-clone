@@ -60,7 +60,7 @@ import type {
 import { BACKEND_URL, FRONTEND_URL } from './support/stack'
 
 export { expect }
-export type { Locator, Page } from '@playwright/test'
+export type { Locator, Page, Request } from '@playwright/test'
 export { BACKEND_URL, FRONTEND_URL }
 
 export interface TestUser {

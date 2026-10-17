@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Depends, WebSocket
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.client_id import parse_client_id
 from app.core.websockets import (
     WS_CLOSE_NOT_FOUND,
     authenticate_socket,
@@ -38,6 +39,7 @@ async def collab_socket(
     websocket: WebSocket,
     page_id: uuid.UUID,
     token: str = "",
+    client_id: str = "",
     auth_service: AuthService = Depends(get_auth_service),
     page_service: Any = Depends(get_page_service),
     collab_server: CollabServer = Depends(get_collab_server),
@@ -63,6 +65,7 @@ async def collab_socket(
 
     page, member = access
     read_only = page.deleted_at is not None or member.role == WorkspaceRole.VIEWER
+    tab = parse_client_id(client_id)
 
     # End the setup transaction now: the socket below can stay open for
     # hours, and its request-scoped session must not hold locks that long.
@@ -82,7 +85,7 @@ async def collab_socket(
         # sender as the page's last editor.
         channel = WriteTrackingChannel(
             GuardedChannel(base, lambda: collab_server.may_write(page_id, user.id)),
-            lambda: collab_server.note_write(page_id, user.id),
+            lambda: collab_server.note_write(page_id, user.id, client_id=tab),
         )
 
     try:

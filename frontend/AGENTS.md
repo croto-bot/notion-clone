@@ -49,7 +49,7 @@ e2e/                     # Playwright suite: fixtures.ts, *.spec.ts, guards.spec
 ## API layer
 
 - **Endpoints:** every backend path is in `API` in `src/lib/api-endpoints.ts`. URL builders live there too (`buildItemsListUrl(params)` turns `name` into `name__ilike=%term%`, with `%` and `_` escaped).
-- **Client:** `api.get/post/put/patch/delete` from `src/lib/api-client.ts`. It adds `Authorization: Bearer <token>` and throws `ApiError`.
+- **Client:** `api.get/post/put/patch/delete` from `src/lib/api-client.ts`. It adds `Authorization: Bearer <token>`, sends `X-Client-Id` (one UUID per tab, `src/lib/client-id.ts`; the collab socket sends the same id as `client_id`. The backend echoes it on workspace events. `useWorkspaceEvents` skips the event only while this tab has a pending or just-settled mutation of that page) and throws `ApiError`.
 - **Queries and mutations:** one hook per operation in `src/hooks/use<Feature>.ts`. Keys come from `src/lib/query-keys.ts` (`items.all`, `items.list(params)`). Mutations invalidate the feature's `all` key.
 
 ```tsx

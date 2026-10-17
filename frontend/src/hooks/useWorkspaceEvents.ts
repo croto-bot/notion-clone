@@ -2,9 +2,11 @@ import { useEffect } from 'react'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/contexts/AuthContext'
 import { API } from '@/lib/api-endpoints'
+import { clientId } from '@/lib/client-id'
 import { queryKeys } from '@/lib/query-keys'
 import { WS_CLOSE_NOT_FOUND, WS_CLOSE_UNAUTHORIZED, wsUrl } from '@/lib/ws'
 import { invalidatePageLists } from '@/features/pages/page-cache'
+import { hasRecentPageMutation } from '@/features/pages/page-mutations'
 import type { WorkspaceEvent } from '@/types/events'
 
 type Refresh = 'pages' | 'comments' | 'members' | 'workspaces'
@@ -51,8 +53,12 @@ const COALESCE_MS = 250
 
 /**
  * Keeps the open workspace live: connects to `WS /workspaces/{id}/events` and
- * reloads the matching queries when a member changes something. Reconnects with
- * a growing delay; after a reconnect everything is reloaded, since events may
+ * reloads the matching queries when anyone changes something. This tab skips
+ * an event only when it carries this tab's id and this tab has a pending or
+ * just-settled mutation of that page: the refetch can read pre-commit state
+ * and land over the optimistic paint. A matching id with no recent mutation
+ * is processed, so a spoofed id cannot silence the tab. Reconnects with a
+ * growing delay; after a reconnect everything is reloaded, since events may
  * have been missed.
  */
 export function useWorkspaceEvents(workspaceId: string | undefined) {
@@ -91,7 +97,15 @@ export function useWorkspaceEvents(workspaceId: string | undefined) {
       }
       socket.onmessage = message => {
         try {
-          schedule(refreshFor(JSON.parse(String(message.data)) as WorkspaceEvent))
+          const event = JSON.parse(String(message.data)) as WorkspaceEvent
+          if (
+            event.client_id === clientId &&
+            event.page_id &&
+            hasRecentPageMutation(event.page_id)
+          ) {
+            return
+          }
+          schedule(refreshFor(event))
         } catch {
           // Not JSON: ignore.
         }

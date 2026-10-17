@@ -4,6 +4,8 @@ import { WebsocketProvider } from 'y-websocket'
 import { useAuth } from '@/contexts/AuthContext'
 import { displayNameOf, useCurrentUser } from '@/hooks/useUser'
 import { API } from '@/lib/api-endpoints'
+import { clientId } from '@/lib/client-id'
+import { notePageActivity } from '@/features/pages/page-mutations'
 import { colorForUser } from '@/lib/colors'
 import { createValueStore } from '@/lib/value-store'
 import { WS_CLOSE_NOT_FOUND, WS_CLOSE_UNAUTHORIZED, wsBaseUrl } from '@/lib/ws'
@@ -97,9 +99,11 @@ export function useCollabSession(pageId: string): CollabSession | null {
     const identity = identityRef.current
     if (!token || !identity) return
     const doc = new Y.Doc()
-    // y-websocket joins `${serverUrl}/${roomName}?${params}`: this is `/pages/{id}/collab?token=…`.
+    // y-websocket joins `${serverUrl}/${roomName}?${params}`: this is
+    // `/pages/{id}/collab?token=…&client_id=…`. The save echoes `client_id`
+    // on `page.updated`, so typing does not refetch over an in-flight rename.
     const provider = new WebsocketProvider(wsBaseUrl(), API.WS.PAGE_COLLAB(pageId).slice(1), doc, {
-      params: { token },
+      params: { token, client_id: clientId },
     })
     provider.awareness.setLocalStateField('user', {
       id: identity.id,
@@ -114,6 +118,12 @@ export function useCollabSession(pageId: string): CollabSession | null {
       if (isSynced) setHasSynced(true)
     }
     const onAwareness = () => setUsers(readUsers(provider, identity.id))
+    // A local edit is this tab's change: the save it causes publishes
+    // page.updated with this tab's id, which the events hook then skips
+    // instead of refetching the page and every list about once a second.
+    const onDocUpdate = (_update: Uint8Array, origin: unknown) => {
+      if (origin !== provider) notePageActivity(pageId)
+    }
     const onClose = (event: CloseEvent | null) => {
       // The backend refuses with these codes: retrying would loop forever, and
       // the page is not coming back on this socket. The editor may mount on
@@ -127,6 +137,7 @@ export function useCollabSession(pageId: string): CollabSession | null {
     provider.on('sync', onSync)
     provider.on('connection-close', onClose)
     provider.awareness.on('change', onAwareness)
+    doc.on('update', onDocUpdate)
 
     store.set({ doc, provider })
     return () => {
@@ -134,6 +145,7 @@ export function useCollabSession(pageId: string): CollabSession | null {
       provider.off('sync', onSync)
       provider.off('connection-close', onClose)
       provider.awareness.off('change', onAwareness)
+      doc.off('update', onDocUpdate)
       provider.destroy()
       doc.destroy()
       store.set(null)

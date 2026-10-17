@@ -145,7 +145,8 @@ def create_app(
 
     # Middleware is applied LIFO: last-added = outermost (first to handle request).
     # Order: CORS → WideEvent. WideEventMiddleware generates the canonical
-    # request_id and emits the wide log.
+    # request_id, records a UUID X-Client-Id on that context, and emits the
+    # wide log. The event bus reads the tab id from the same context.
     app.add_middleware(WideEventMiddleware)
 
     app.add_middleware(

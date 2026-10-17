@@ -8,12 +8,18 @@ process), so every socket served by this process sees every event.
 Payload contract (docs/SPEC.md §WebSockets)::
 
     {"type": "page.created", "page_id": "<uuid>", "actor_id": "<uuid>"}
+
+A change made by a tab that sent a UUID ``X-Client-Id`` (or a collab save
+that passed the same id) also carries ``"client_id": "<tab id>"``.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any
+import enum
+from typing import TYPE_CHECKING, Any, Final
+
+from app.core.client_id import get_client_id
 
 if TYPE_CHECKING:
     import uuid
@@ -21,6 +27,14 @@ if TYPE_CHECKING:
 # Queue capacity per socket. A slow client must not block publishers; when the
 # queue is full the event is dropped for that client only.
 _QUEUE_SIZE = 256
+
+
+class _Ambient(enum.Enum):
+    TOKEN = enum.auto()
+
+
+# ``publish``'s default: echo the current request's tab id. ``None`` means no tab.
+AMBIENT: Final = _Ambient.TOKEN
 
 
 class WorkspaceEventBus:
@@ -44,8 +58,24 @@ class WorkspaceEventBus:
             if not queues:
                 del self._subscribers[workspace_id]
 
-    def publish(self, workspace_id: uuid.UUID, event: dict[str, Any]) -> None:
-        """Deliver the event to every subscriber of the workspace, now."""
+    def publish(
+        self,
+        workspace_id: uuid.UUID,
+        event: dict[str, Any],
+        *,
+        client_id: str | None | _Ambient = AMBIENT,
+    ) -> None:
+        """Deliver the event to every subscriber of the workspace, now.
+
+        ``client_id`` is the tab to echo. Callers that omit it use the current
+        request's id (a UUID ``X-Client-Id``). A collab save passes the
+        socket's id, or ``None`` for a socket without one: that save must
+        never echo some other request's id. The client skips the event only
+        while that tab has a recent mutation of the page.
+        """
+        tab = get_client_id() if client_id is AMBIENT else client_id
+        if tab:
+            event = {**event, "client_id": tab}
         for queue in list(self._subscribers.get(workspace_id, ())):
             try:
                 queue.put_nowait(event)

@@ -15,8 +15,10 @@ Persistence (SPEC §WebSockets):
   rooms about once a second (debounce) and the endpoint persists on the last
   disconnect;
 - persisting also extracts the plain text of the ``document-store`` fragment
-  into ``content_text`` and sets ``last_edited_*`` (to the user who most
-  recently sent a document update).
+  into ``content_text``, sets ``last_edited_*`` (to the user who most
+  recently sent a document update), and publishes ``page.updated`` with that
+  writer's tab id so other clients refresh without the writer's own in-flight
+  rename refetching over itself.
 
 Concurrent writers are serialized by one lock per page, shared by room
 creation, ``PUT /pages/{id}/document`` and the flush: the room is always
@@ -90,6 +92,7 @@ class CollabServer:
         self._dirty: set[str] = set()
         self._changes: dict[str, int] = {}
         self._writers: dict[str, uuid.UUID] = {}
+        self._tabs: dict[str, str] = {}
         self._subscriptions: dict[str, Subscription] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._starter: asyncio.Task[None] | None = None
@@ -175,21 +178,34 @@ class CollabServer:
             return None
         return room.ydoc.get_update()
 
-    def apply_external_update(self, page_id: uuid.UUID, update: bytes) -> None:
+    def apply_external_update(self, page_id: uuid.UUID, update: bytes) -> bool:
         """Feed an out-of-band update (PUT /pages/{id}/document) to the room.
 
         The room then broadcasts it to its clients and the flush loop stores
-        it like any other change. A page without a room needs nothing: the
-        caller wrote the database directly.
+        it like any other change, publishing ``page.updated`` for it. Returns
+        whether that flush is due. A page without a room, or an update the
+        room already held, needs nothing: the caller wrote the database
+        directly and publishes itself.
         """
-        if not update:
-            return
-        if room := self._server.rooms.get(str(page_id)):
+        name = str(page_id)
+        if update and (room := self._server.rooms.get(name)):
             room.ydoc.apply_update(update)
+        return name in self._dirty
 
-    def note_write(self, page_id: uuid.UUID, user_id: uuid.UUID) -> None:
-        """Record the user who most recently sent a document update."""
-        self._writers[str(page_id)] = user_id
+    def note_write(
+        self,
+        page_id: uuid.UUID,
+        user_id: uuid.UUID,
+        *,
+        client_id: str | None = None,
+    ) -> None:
+        """Record who most recently sent a document update, and their tab."""
+        name = str(page_id)
+        self._writers[name] = user_id
+        if client_id:
+            self._tabs[name] = client_id
+        else:
+            self._tabs.pop(name, None)
 
     async def may_write(self, page_id: uuid.UUID, user_id: uuid.UUID) -> bool:
         """Fresh write-access check for one incoming document push.
@@ -245,6 +261,7 @@ class CollabServer:
             return
         from app.modules.pages.repository import PageRepository  # circular-safe
 
+        saved_event: tuple[uuid.UUID, uuid.UUID, str | None] | None = None
         async with self.page_lock(page_id):
             if name not in self._dirty:
                 return
@@ -254,7 +271,7 @@ class CollabServer:
             content_text = extract_text(state)
             async with _session_factory()() as session:
                 repo = PageRepository(session)
-                await repo.set_document(
+                saved = await repo.set_document(
                     page_id,
                     ydoc_state=state,
                     content_text=content_text,
@@ -263,6 +280,37 @@ class CollabServer:
                 )
             if self._changes.get(name, 0) == seen_changes:
                 self._dirty.discard(name)
+            actor = writer or (saved.last_edited_by_id if saved is not None else None)
+            if saved is not None and actor is not None:
+                saved_event = (saved.workspace_id, actor, self._tabs.get(name))
+        if saved_event is not None:
+            workspace_id, actor, tab = saved_event
+            self._publish_saved(workspace_id, page_id, actor, tab)
+
+    @staticmethod
+    def _publish_saved(
+        workspace_id: uuid.UUID,
+        page_id: uuid.UUID,
+        actor: uuid.UUID,
+        client_id: str | None,
+    ) -> None:
+        """Tell the workspace a document save landed.
+
+        Other members refresh search text and open pages. The writer's tab id,
+        when the socket sent a UUID, lets that tab skip the event while a
+        rename is in flight.
+        """
+        from app.modules.events.bus import get_event_bus  # circular-safe
+
+        get_event_bus().publish(
+            workspace_id,
+            {
+                "type": "page.updated",
+                "page_id": str(page_id),
+                "actor_id": str(actor),
+            },
+            client_id=client_id,
+        )
 
     def dirty_pages(self) -> set[str]:  # observability for logs
         return set(self._dirty)
