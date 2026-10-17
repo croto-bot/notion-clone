@@ -263,7 +263,12 @@ export function PageHeader({ page, editable }: PageHeaderProps) {
       <div className={pageColumnClass(page)}>
         {page.icon ? (
           <div
-            className={cn('relative z-10 h-[78px]', hasCover ? '-mt-[39px]' : 'pt-[0px] mt-[56px]')}
+            className={cn(
+              // pointer-events-none: the strip overlaps the cover's hover controls
+              // (z-10, -mt-[39px]); only the icon button itself takes pointer events.
+              'pointer-events-none relative z-10 h-[78px]',
+              hasCover ? '-mt-[39px]' : 'pt-[0px] mt-[56px]'
+            )}
           >
             <Popover open={iconOpen} onOpenChange={setIconOpen}>
               <PopoverTrigger asChild disabled={!editable}>
@@ -272,7 +277,7 @@ export function PageHeader({ page, editable }: PageHeaderProps) {
                   aria-label="Change page icon"
                   disabled={!editable}
                   data-testid="page-icon"
-                  className="hover:bg-hover flex size-[78px] items-center justify-center rounded-[6px] text-[66px] leading-none transition-colors duration-100 disabled:hover:bg-transparent"
+                  className="hover:bg-hover pointer-events-auto flex size-[78px] items-center justify-center rounded-[6px] text-[66px] leading-none transition-colors duration-100 disabled:hover:bg-transparent"
                 >
                   {page.icon}
                 </button>

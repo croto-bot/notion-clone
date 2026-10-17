@@ -520,14 +520,26 @@ export function sidebarPage(page: Page, title: string) {
  * Drags with real mouse moves. dnd-kit's PointerSensor needs the intermediate
  * pointer events of a real drag: a single jump (locator.dragTo) can end the
  * drag before the droppable under the pointer was ever computed.
+ *
+ * `targetPosition` (pixels from the target's top left, like dragTo) drops on a
+ * chosen point of the target: y < 28% of a sidebar row drops BEFORE it, y >
+ * 72% AFTER it, the middle band drops INSIDE it.
  */
-export async function mouseDrag(page: Page, source: Locator, target: Locator): Promise<void> {
+export async function mouseDrag(
+  page: Page,
+  source: Locator,
+  target: Locator,
+  targetPosition?: { x: number; y: number }
+): Promise<void> {
   const from = await source.boundingBox()
   const to = await target.boundingBox()
   if (!from || !to) throw new Error('drag source or target is not visible')
+  const drop = targetPosition
+    ? { x: to.x + targetPosition.x, y: to.y + targetPosition.y }
+    : { x: to.x + to.width / 2, y: to.y + to.height / 2 }
   await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
   await page.mouse.down()
-  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 15 })
+  await page.mouse.move(drop.x, drop.y, { steps: 15 })
   await page.mouse.up()
 }
 

@@ -102,6 +102,20 @@ test.describe('databases and publish (F13, F15)', () => {
         return rows.find(row => row.id === card.id)?.properties[status.id]
       })
       .toBe(status.options?.find(option => option.name === 'Done')?.id)
+
+    // The "+ New" of a column creates a row with that status already set. The
+    // board has no inline title input: open the new card and name it on its page.
+    await page.getByRole('button', { name: 'New row in Done' }).click()
+    await page.getByRole('button', { name: 'Untitled', exact: true }).click()
+    await page.getByLabel('Page title').fill('Fresh in column')
+    await page.getByLabel('Page title').press('Enter')
+    await expect
+      .poll(async () => (await listRows(api, user, database.id)).map(row => row.title))
+      .toContain('Fresh in column')
+    const fresh = (await listRows(api, user, database.id)).find(
+      row => row.title === 'Fresh in column'
+    )
+    expect(fresh?.properties[status.id]).toBe(status.options?.find(o => o.name === 'Done')?.id)
   })
 
   test('adds a property and switches to gallery', async ({ authedPage: page, api, user }) => {
@@ -131,6 +145,114 @@ test.describe('databases and publish (F13, F15)', () => {
     await page.getByRole('button', { name: 'Add a view' }).click()
     await page.getByRole('menuitem', { name: 'List' }).click()
     await expect(page.getByTestId('database-list')).toBeVisible()
+  })
+
+  test('renames, retypes and deletes a property', async ({ authedPage: page, api, user }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Schema edits',
+    })
+    await page.goto(`/p/${database.id}`)
+    await expect(page.getByTestId('database-view')).toBeVisible()
+
+    // Rename Status -> State from its column header.
+    const statusHeader = page.getByRole('columnheader').filter({ hasText: 'Status' })
+    await statusHeader.locator('button').click()
+    await page.getByLabel('Property name').fill('State')
+    await page.getByLabel('Property name').press('Enter')
+    await expect(page.getByRole('columnheader').filter({ hasText: 'State' })).toBeVisible()
+    await expect
+      .poll(async () =>
+        (await getPage(api, user, database.id)).database_schema?.some(item => item.name === 'State')
+      )
+      .toBe(true)
+
+    // Retype Tags (multi select) into a number property.
+    const tagsHeader = page.getByRole('columnheader').filter({ hasText: 'Tags' })
+    await tagsHeader.locator('button').click()
+    await page
+      .getByRole('list', { name: 'Property type' })
+      .getByRole('button', {
+        name: 'Number',
+      })
+      .click()
+    await expect
+      .poll(
+        async () =>
+          (await getPage(api, user, database.id)).database_schema?.find(
+            item => item.name === 'Tags'
+          )?.type
+      )
+      .toBe('number')
+
+    // Delete it: the column disappears.
+    await tagsHeader.locator('button').click()
+    await page.getByRole('button', { name: 'Delete property' }).click()
+    await expect(tagsHeader).toBeHidden()
+    await expect
+      .poll(async () =>
+        (await getPage(api, user, database.id)).database_schema?.some(item => item.name === 'Tags')
+      )
+      .toBe(false)
+  })
+
+  test('sorts, hides properties and edits views', async ({ authedPage: page, api, user }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Sorted',
+    })
+    const status = property(database.database_schema, 'Status')
+    const done = status.options?.find(option => option.name === 'Done')
+    const started = status.options?.find(option => option.name === 'Not started')
+    await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: 'Bravo',
+      properties: { [status.id]: done!.id },
+    })
+    await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: 'Alpha',
+      properties: { [status.id]: started!.id },
+    })
+    await page.goto(`/p/${database.id}`)
+    await expect(page.getByTestId('database-view')).toBeVisible()
+
+    // Sort by Name, ascending, then flip to descending.
+    await page.getByRole('button', { name: 'Sort', exact: true }).click()
+    await page.getByRole('button', { name: 'Add a sort' }).click()
+    await page.getByLabel('Sort property').selectOption({ label: 'Name' })
+    await expect(page.locator('[data-row-id]').first()).toHaveAttribute('aria-label', 'Alpha')
+    await page.getByLabel('Sort direction').selectOption('desc')
+    await expect(page.locator('[data-row-id]').first()).toHaveAttribute('aria-label', 'Bravo')
+
+    // Hide the Status column in this view.
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Properties' }).click()
+    await page.getByRole('switch', { name: 'Show Status' }).click()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('columnheader').filter({ hasText: 'Status' })).toHaveCount(0)
+    const saved = await getPage(api, user, database.id)
+    expect(saved.database_views?.[0]?.hidden_properties).toContain(status.id)
+
+    // Rename the view, add a second one, then delete it again.
+    await page.getByRole('button', { name: 'View options for Table' }).click()
+    await page.getByLabel('View name').fill('Planning')
+    await page.getByLabel('View name').press('Enter')
+    await expect(page.getByRole('tab', { name: 'Planning' })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Add a view' }).click()
+    await page.getByRole('menuitem', { name: 'Board' }).click()
+    await expect(page.getByTestId('database-board')).toBeVisible()
+    await page.getByRole('button', { name: 'View options for Board' }).click()
+    await page.getByRole('button', { name: 'Delete view' }).click()
+    await expect(page.getByRole('tab', { name: 'Planning' })).toBeVisible()
+    await expect(page.getByTestId('database-board')).toBeHidden()
   })
 
   test('creates a database from the sidebar', async ({ authedPage: page, api, user }) => {
