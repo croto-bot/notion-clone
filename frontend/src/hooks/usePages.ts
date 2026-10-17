@@ -133,10 +133,19 @@ export function useUpdatePage() {
       if (Object.keys(patch).length > 0) patchPageEverywhere(queryClient, id, patch)
       return { at }
     },
-    onSuccess: (page, { id }, context) => {
+    onSuccess: async (page, { id }, context) => {
       // A newer mutation for the same page already answered (or will): storing
       // this older response would write its stale title/properties back.
       if (context && updateMutationClock.get(id) !== context.at) return
+      // A read of this page that started before the server committed can
+      // still be in flight (an events-driven invalidation raced the request);
+      // its response would land right after this store and revert it. That is
+      // the race that made the "Delete view" menu vanish mid-click: the views
+      // list reverted, the popover's view unmounted under the pointer.
+      // Cancelling drops the stale fetch result; the mutation's own response
+      // is the freshest read, and the next event invalidation refetches.
+      await queryClient.cancelQueries({ queryKey: queryKeys.pages.detail(id) })
+      await queryClient.cancelQueries({ queryKey: ['pages', 'rows'] })
       storePageResponse(queryClient, page)
     },
     onError: (_error, { id }) => {
