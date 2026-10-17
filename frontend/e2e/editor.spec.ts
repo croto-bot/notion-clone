@@ -3,11 +3,13 @@ import {
   expect,
   addMember,
   createPage,
+  createWorkspace,
   ensureWorkspace,
   FRONTEND_URL,
   getDocument,
   getMe,
   listComments,
+  openWorkspaceMenu,
   pageCollabPath,
   registerUser,
   sidebar,
@@ -639,5 +641,128 @@ test.describe('editor and live workspace (F5, F6, F7, F10, F14, F16)', () => {
     await expect
       .poll(async () => (await listComments(api, user, note.id)).map(item => item.body))
       .toEqual([])
+  })
+})
+
+test.describe('editor: callout icon and the space below the text (coverage)', () => {
+  test('changes a callout icon and types at the end after a click below the text', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Callouts' })
+    await page.goto(`/p/${note.id}`)
+    const editor = page.getByTestId('editor')
+    await expect(editor).toBeVisible({ timeout: 15_000 })
+    await editor.click()
+    await page.keyboard.type('/callout')
+    await page.locator('.bn-suggestion-menu').getByText('Callout', { exact: true }).click()
+    await page.keyboard.type('Heads up')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('/callout')
+    await page.locator('.bn-suggestion-menu').getByText('Callout', { exact: true }).click()
+    await page.keyboard.type('Second')
+
+    await page
+      .getByTestId('callout')
+      .first()
+      .getByRole('button', { name: 'Change callout icon' })
+      .click()
+    const picker = page.getByRole('dialog')
+    await picker.getByLabel('Filter emoji').fill('rocket')
+    const emojiButton = picker.locator('button[frimousse-emoji]:visible').first()
+    const emoji = (await emojiButton.textContent()) ?? ''
+    await emojiButton.click()
+    await expect(picker).toBeHidden()
+    await expect(
+      page.getByTestId('callout').first().getByRole('button', { name: 'Change callout icon' })
+    ).toHaveText(emoji)
+
+    // The empty band under the text puts the cursor at the end of the last block.
+    await page.getByLabel('Page title').click()
+    const editorBox = (await editor.boundingBox())!
+    await page.mouse.click(editorBox.x + editorBox.width / 2, editorBox.y + editorBox.height + 40)
+    await page.keyboard.type(' at the end')
+    await expect(page.getByTestId('callout').last()).toContainText('Second at the end')
+    await expect(page.getByTestId('callout').first()).toContainText('Heads up')
+
+    // Both reach the stored document: a fresh load shows them.
+    await expect
+      .poll(async () => {
+        await page.reload()
+        await expect(page.getByTestId('callout').last()).toBeVisible({ timeout: 15_000 })
+        return [
+          await page.getByTestId('callout').first().getByRole('button').textContent(),
+          await page.getByTestId('callout').last().textContent(),
+        ]
+      })
+      .toEqual([emoji, expect.stringContaining('Second at the end')])
+  })
+})
+
+test.describe('live workspace: reconnect (coverage)', () => {
+  test('the live updates connect again after a failed connection', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    await ensureWorkspace(api, user)
+    const second = await createWorkspace(api, user, { name: 'Second space' })
+    const sockets: string[] = []
+    page.on('websocket', socket => {
+      if (socket.url().includes(workspaceEventsPath(second.id))) sockets.push(socket.url())
+    })
+    await page.goto('/home')
+    await expect(page.getByTestId('workspace-name')).toBeVisible()
+
+    // Open the second workspace while offline: its events socket cannot connect.
+    await page.context().setOffline(true)
+    await openWorkspaceMenu(page)
+    await page
+      .getByRole('list', { name: 'Workspaces' })
+      .getByRole('button')
+      .filter({ hasText: 'Second space' })
+      .click()
+    await expect(page.getByTestId('workspace-name')).toHaveText('Second space')
+
+    // Back online, the socket tries again by itself and live updates arrive.
+    // (Playwright reports only the attempt that connects.)
+    await page.context().setOffline(false)
+    await expect.poll(() => sockets.length, { timeout: 15_000 }).toBeGreaterThanOrEqual(1)
+    await createPage(api, user, { workspace_id: second.id, title: 'Arrived live' })
+    await expect(sidebarPage(page, 'Arrived live')).toBeVisible({ timeout: 15_000 })
+  })
+})
+
+test.describe('editor: page links on the web (coverage)', () => {
+  test('a link to a published sub-page opens its public page', async ({
+    authedPage: page,
+    page: anonymous,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Index' })
+    await page.goto(`/p/${note.id}`)
+    const editor = page.getByTestId('editor')
+    await expect(editor).toBeVisible({ timeout: 15_000 })
+    await editor.click()
+    await page.keyboard.type('/page')
+    await page.locator('.bn-suggestion-menu').getByText('Page', { exact: true }).click()
+    await expect(page).not.toHaveURL(`/p/${note.id}`, { timeout: 10_000 })
+    const childId = new URL(page.url()).pathname.split('/').pop()!
+    await updatePage(api, user, childId, { title: 'Chapter one', is_public: true })
+    const shared = await updatePage(api, user, note.id, { is_public: true })
+    await expect
+      .poll(async () => (await getDocument(api, user, note.id)).state, { timeout: 15_000 })
+      .not.toBeNull()
+
+    await anonymous.goto(`/share/${shared.public_id}`)
+    const link = anonymous.getByTestId('page-link')
+    await expect(link).toHaveText('Chapter one')
+    await link.click()
+    await expect(anonymous.getByRole('heading', { level: 1 })).toHaveText('Chapter one')
+    expect(anonymous.url()).toContain('/share/')
   })
 })

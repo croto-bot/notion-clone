@@ -44,7 +44,10 @@ export default defineConfig({
   reporter: isCI ? [['list'], ['html', { open: 'never' }]] : [['list']],
   // The dev server compiles each module on its first request: the first page
   // load of a run can take a few seconds to hydrate on a slow CI machine.
-  expect: { timeout: 10_000 },
+  // V8 coverage counts every call, which slows the browser: E2E_COVERAGE=1
+  // gives each test and each expect three times as long.
+  timeout: COVERAGE_ENABLED ? 90_000 : 30_000,
+  expect: { timeout: COVERAGE_ENABLED ? 30_000 : 10_000 },
   use: {
     baseURL: FRONTEND_URL,
     trace: 'retain-on-failure',

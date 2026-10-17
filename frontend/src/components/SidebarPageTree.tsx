@@ -278,7 +278,7 @@ function RenameInput({
 function TailDropZone({ active }: { active: boolean }) {
   const { setNodeRef } = useDroppable({ id: TAIL_ID })
   return (
-    <div ref={setNodeRef} aria-hidden="true" className="relative h-2">
+    <div ref={setNodeRef} aria-hidden="true" data-testid="tree-tail" className="relative h-2">
       {active && (
         <span className="bg-primary pointer-events-none absolute right-1 left-6 top-0 h-[2px] rounded-full" />
       )}

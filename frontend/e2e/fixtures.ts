@@ -25,6 +25,7 @@
  *   authedPage  A page in its own browser context, already signed in as `user`.
  *   loginAs     (user) => a new signed-in page for any other user.
  */
+import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import {
   test as base,
@@ -58,10 +59,10 @@ import type {
   Workspace,
 } from '../src/types/workspace'
 import { COVERAGE_ENABLED, addCoverage } from './support/coverage'
-import { BACKEND_URL, FRONTEND_URL } from './support/stack'
+import { BACKEND_URL, DB_CONTAINER, FRONTEND_URL } from './support/stack'
 
 export { expect }
-export type { Locator, Page, Request } from '@playwright/test'
+export type { APIRequestContext, Locator, Page, Request } from '@playwright/test'
 export { BACKEND_URL, FRONTEND_URL }
 
 export interface TestUser {
@@ -121,6 +122,16 @@ export async function loginUser(
   const response = await api.post('/auth/login', { data: { email, password } })
   await expectOk(response, `POST /auth/login (${email})`)
   return ((await response.json()) as AuthSessionResponse).id
+}
+
+/**
+ * Ends the session on the backend (`POST /auth/logout`), like a sign-out on
+ * another device. A page that still holds the token gets a real 401 on its
+ * next request.
+ */
+export async function revokeSession(api: APIRequestContext, user: Token): Promise<void> {
+  const response = await api.post('/auth/logout', { headers: authHeaders(user) })
+  await expectOk(response, 'POST /auth/logout')
 }
 
 /** `GET /users/me` */
@@ -259,6 +270,25 @@ export async function getPage(
   const response = await api.get(`/pages/${pageId}`, { headers: authHeaders(user) })
   await expectOk(response, `GET /pages/${pageId}`)
   return (await response.json()) as PageResponse
+}
+
+/**
+ * Moves a page's last edit back in time, straight in the e2e Postgres. No
+ * endpoint can write an old timestamp, and fake clocks are banned: this is how
+ * a test shows a page that someone last edited hours or years ago.
+ */
+export function backdatePage(pageId: string, editedAt: Date): void {
+  execFileSync('docker', [
+    'exec',
+    DB_CONTAINER,
+    'psql',
+    '--username=app',
+    '--dbname=app',
+    '--no-psqlrc',
+    '--quiet',
+    '--set=ON_ERROR_STOP=1',
+    `--command=UPDATE pages SET last_edited_at = '${editedAt.toISOString()}' WHERE id = '${pageId}'`,
+  ])
 }
 
 export async function updatePage(
