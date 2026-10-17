@@ -34,6 +34,35 @@ export function invalidatePageLists(queryClient: QueryClient) {
   }
 }
 
+/** Cancels every page-list refetch (tree, favorites, recent, trash, search):
+ * one started before an update would land its pre-change snapshot over the
+ * optimistic patch (a failed older mutation's repair refetch, an events flush). */
+export async function cancelPageLists(queryClient: QueryClient) {
+  for (const key of LIST_KEYS) {
+    await queryClient.cancelQueries({ queryKey: key })
+  }
+}
+
+/** The rows query of the database that holds this row. The response knows
+ * the parent; before it arrives the detail cache does (a PATCH never moves a
+ * row). A page directly under the workspace root has no rows query. */
+export function rowsKeyOf(
+  queryClient: QueryClient,
+  id: string,
+  parentId?: string | null
+): readonly unknown[] | undefined {
+  const parent =
+    parentId ?? queryClient.getQueryData<PageResponse>(queryKeys.pages.detail(id))?.parent_id
+  return parent ? queryKeys.pages.rows(parent) : undefined
+}
+
+/** Marks the rows list of a row's database stale: the refetch carries the
+ * server's merged properties (another member's key may be in the same merge). */
+export function invalidateRowsOf(queryClient: QueryClient, id: string, parentId?: string | null) {
+  const key = rowsKeyOf(queryClient, id, parentId)
+  if (key) void queryClient.invalidateQueries({ queryKey: key })
+}
+
 /** Replaces the cached detail of a page with a fresh server response, and updates the lists to match. */
 export function storePageResponse(queryClient: QueryClient, page: PageResponse) {
   queryClient.setQueryData(queryKeys.pages.detail(page.id), page)
@@ -44,11 +73,6 @@ export function storePageResponse(queryClient: QueryClient, page: PageResponse) 
     updated_at: page.updated_at,
     last_edited_at: page.last_edited_at,
   })
-  // The server's merged properties are the truth for every rows cache holding
-  // this row (another member's key may have landed in the same merge).
-  queryClient.setQueriesData<PageResponse[]>({ queryKey: ['pages', 'rows'] }, rows =>
-    rows?.map(row => (row.id === page.id ? { ...row, properties: page.properties } : row))
-  )
 }
 
 /** Merges a per-key property patch into a row's stored properties (`null` removes the key). */

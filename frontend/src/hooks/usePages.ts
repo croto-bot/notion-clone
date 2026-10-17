@@ -9,9 +9,12 @@ import { ApiError, api } from '@/lib/api-client'
 import { API, buildRecentUrl, buildSearchUrl, buildTrashUrl } from '@/lib/api-endpoints'
 import { queryKeys } from '@/lib/query-keys'
 import {
+  cancelPageLists,
   invalidatePageLists,
+  invalidateRowsOf,
   patchPageContent,
   patchPageEverywhere,
+  rowsKeyOf,
   storePageResponse,
 } from '@/features/pages/page-cache'
 import { moveInList, removeSubtree } from '@/features/pages/page-tree'
@@ -132,12 +135,19 @@ export function useUpdatePage() {
       // Cancel in-flight reads first: a fetch that started before
       // the change would resolve after the optimistic patch and clobber it
       // (a filter or favorite that visibly "jumps back"). Row edits are cached
-      // under their database's rows key: cancel only the caches that hold
-      // this row, not every database's rows query.
+      // under their database's rows key: cancel that query even when its data
+      // is not loaded (a fetch in flight would land over the patch), plus every
+      // rows cache that holds this row (the detail may not be cached).
       await queryClient.cancelQueries({ queryKey: ['pages', 'detail', id] })
+      const rowsKey = rowsKeyOf(queryClient, id)
+      if (rowsKey) await queryClient.cancelQueries({ queryKey: rowsKey })
       for (const key of rowsCachesHolding(queryClient, id)) {
         await queryClient.cancelQueries({ queryKey: key })
       }
+      // The list queries invalidatePageLists refetches (tree, favorites,
+      // recent, trash, search): one started before this change (a failed older
+      // mutation's repair) would land its older title over the newer patch.
+      await cancelPageLists(queryClient)
       patchPageContent(queryClient, id, data)
       const patch: Parameters<typeof patchPageEverywhere>[2] = {}
       if (data.title !== undefined) patch.title = data.title
@@ -147,9 +157,6 @@ export function useUpdatePage() {
       return { at }
     },
     onSuccess: async (page, { id }, context) => {
-      // A newer mutation for the same page already answered (or will): storing
-      // this older response would write its stale title/properties back.
-      if (context && updateMutationClock.get(id) !== context.at) return
       // A read of this page that started before the server committed can
       // still be in flight (an events-driven invalidation raced the request);
       // its response would land right after this store and revert it. That is
@@ -158,20 +165,38 @@ export function useUpdatePage() {
       // Cancelling drops the stale fetch result; the mutation's own response
       // is the freshest read, and the next event invalidation refetches.
       await queryClient.cancelQueries({ queryKey: queryKeys.pages.detail(id) })
+      const rowsKey = rowsKeyOf(queryClient, id)
+      if (rowsKey) await queryClient.cancelQueries({ queryKey: rowsKey })
       for (const key of rowsCachesHolding(queryClient, id)) {
         await queryClient.cancelQueries({ queryKey: key })
       }
       // Re-check after the awaits: a mutation that started while they ran has
       // already written its optimistic patch, and storing this (older) server
-      // response would revert it.
-      if (context && updateMutationClock.get(id) !== context.at) return
+      // response would revert it. Invalidate instead: the truth refetch is
+      // guaranteed, and the newer mutation's own handlers keep the order.
+      if (context && updateMutationClock.get(id) !== context.at) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.pages.detail(id) })
+        invalidateRowsOf(queryClient, id)
+        return
+      }
       storePageResponse(queryClient, page)
+      // A row PATCH does not paint the server's merged properties into the
+      // rows caches: the rows list refetches instead (the row it renders
+      // carries more than properties, and another member's key may be in the
+      // same merge).
+      invalidateRowsOf(queryClient, id, page.parent_id)
     },
     onError: (_error, { id }, context) => {
-      // Only the newest mutation rolls the cache back: an older failed update
-      // must not invalidate (and refetch pre-commit state) over a newer
-      // optimistic patch that is still in flight.
-      if (context && updateMutationClock.get(id) !== context.at) return
+      // Only the newest mutation rolls the lists back: an older failed update
+      // must not refetch them over a newer optimistic patch (onMutate already
+      // cancelled the in-flight list reads, so the patch stays until the newer
+      // mutation answers). The page itself still refetches on every path: an
+      // optimistic patch that nothing reverts must not linger.
+      if (context && updateMutationClock.get(id) !== context.at) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.pages.detail(id) })
+        invalidateRowsOf(queryClient, id)
+        return
+      }
       void queryClient.invalidateQueries({ queryKey: queryKeys.pages.detail(id) })
       invalidatePageLists(queryClient)
     },
