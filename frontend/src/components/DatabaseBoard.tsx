@@ -130,11 +130,7 @@ function BoardColumn({
       )}
     >
       <div className="mb-2 flex items-center gap-1.5 px-1">
-        {optionId && color ? (
-          <OptionChip option={{ name, color }} />
-        ) : (
-          <span className="text-muted-foreground truncate text-[13px] font-medium">{name}</span>
-        )}
+        <OptionChip option={{ name, color: color ?? 'gray' }} />
         <span className="text-subtle ml-auto text-[12px]">{rows.length}</span>
       </div>
       <div className="flex min-h-[48px] flex-1 flex-col gap-2">
@@ -227,7 +223,7 @@ export function DatabaseBoard() {
       {body}
       <DragOverlay dropAnimation={null}>
         {active ? (
-          <div className="bg-background w-[240px] rounded-[6px] p-2 text-[14px] font-medium shadow-menu">
+          <div className="bg-background w-[244px] rounded-[6px] p-2 text-[14px] font-medium shadow-menu">
             {active.title.trim() ? active.title : UNTITLED}
           </div>
         ) : null}

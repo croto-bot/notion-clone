@@ -18,9 +18,18 @@ import { usePageActions } from '@/hooks/usePageActions'
 import { shortcutLabel } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 
-/** The 4 px strip on the sidebar's right edge: drag to resize, double-click to reset. */
+/**
+ * The 4 px strip on the sidebar's right edge: drag to resize, double-click to reset.
+ *
+ * Always rendered; `inert` while the sidebar is collapsed, so it is never in
+ * the tab order or hit-testing then. The focus outline is drawn inside the
+ * strip (negative offset) because the sidebar clips overflow, in the ring's
+ * base color at full strength: var(--ring) at 0.57 alpha measures ~2:1 on the
+ * sidebar, under the 3:1 a focus indicator needs, while rgb(35,131,226)
+ * measures 3.6:1 light and 4.5:1 dark.
+ */
 function ResizeHandle({ onResizing }: { onResizing: (resizing: boolean) => void }) {
-  const { sidebarWidth, setSidebarWidth } = useAppShell()
+  const { sidebarOpen, sidebarWidth, setSidebarWidth } = useAppShell()
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -45,14 +54,15 @@ function ResizeHandle({ onResizing }: { onResizing: (resizing: boolean) => void 
       aria-valuenow={sidebarWidth}
       aria-valuemin={SIDEBAR_MIN_WIDTH}
       aria-valuemax={SIDEBAR_MAX_WIDTH}
-      tabIndex={0}
+      tabIndex={sidebarOpen ? 0 : -1}
+      inert={!sidebarOpen}
       onPointerDown={onPointerDown}
       onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT_WIDTH)}
       onKeyDown={event => {
         if (event.key === 'ArrowLeft') setSidebarWidth(sidebarWidth - 16)
         else if (event.key === 'ArrowRight') setSidebarWidth(sidebarWidth + 16)
       }}
-      className="hover:bg-primary/50 active:bg-primary/70 focus-visible:bg-primary/50 absolute top-0 -right-[2px] z-20 h-full w-1 cursor-col-resize transition-colors duration-150 outline-none"
+      className="hover:bg-primary/50 active:bg-primary/70 absolute top-0 right-0 z-20 h-full w-1.5 cursor-col-resize transition-colors duration-150 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--primary)]"
     />
   )
 }
@@ -71,15 +81,17 @@ export function Sidebar() {
       data-testid="sidebar"
       data-open={sidebarOpen}
       className={cn(
-        'bg-sidebar relative h-full shrink-0',
-        resizing ? 'transition-none' : 'transition-[width] duration-200 ease-out'
+        'bg-sidebar relative h-full shrink-0 overflow-hidden',
+        resizing
+          ? 'transition-none'
+          : 'transition-[width] duration-200 ease-out motion-reduce:transition-none'
       )}
       style={{ width: sidebarOpen ? sidebarWidth : 0 }}
     >
       <div
         // A hidden sidebar must not take focus: inert removes it from the tab order.
         inert={!sidebarOpen}
-        className="bg-sidebar absolute inset-y-0 left-0 flex flex-col overflow-hidden border-r"
+        className="bg-sidebar flex h-full flex-col border-r"
         style={{ width: sidebarWidth }}
       >
         <div className="group/top flex h-[45px] shrink-0 items-center gap-0.5 px-1.5">
@@ -131,7 +143,7 @@ export function Sidebar() {
           <TrashPopover />
         </div>
       </div>
-      {sidebarOpen && <ResizeHandle onResizing={setResizing} />}
+      <ResizeHandle onResizing={setResizing} />
     </aside>
   )
 }

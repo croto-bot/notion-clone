@@ -22,14 +22,14 @@ const TanStackRouterDevtoolsPanel = lazyDev(() =>
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { ThemeProvider, THEME_KEY } from '@/contexts/ThemeContext'
+import { ThemeProvider } from '@/contexts/ThemeContext'
+import { THEME_SCRIPT } from '@/lib/theme'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { initWebVitals } from '@/lib/web-vitals'
 import { useDevtoolsEnabled } from '@/hooks/useDevtoolsEnabled'
+import { PRODUCT_NAME } from '@/lib/brand'
 
 import appCss from '@/styles/app.css?url'
-
-const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem(${JSON.stringify(THEME_KEY)});var d=t==='dark'||((t===null||t==='system')&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(d){document.documentElement.classList.add('dark');document.documentElement.style.colorScheme='dark'}}catch(e){}})()`
 
 export const Route = createRootRoute({
   head: () => ({
@@ -42,7 +42,11 @@ export const Route = createRootRoute({
         content: 'width=device-width, initial-scale=1',
       },
       {
-        title: 'Notion',
+        title: PRODUCT_NAME,
+      },
+      {
+        name: 'description',
+        content: `${PRODUCT_NAME} is an open-source Notion alternative for docs, wikis and databases.`,
       },
       {
         name: 'theme-color',
@@ -54,9 +58,24 @@ export const Route = createRootRoute({
         rel: 'stylesheet',
         href: appCss,
       },
+      // Dark ink for light tab bars, light ink for dark ones. The fills are
+      // hardcoded per file: some browsers ignore media queries inside a favicon.
+      {
+        rel: 'icon',
+        href: '/favicon-light.svg',
+        type: 'image/svg+xml',
+        media: '(prefers-color-scheme: light)',
+      },
+      {
+        rel: 'icon',
+        href: '/favicon-dark.svg',
+        type: 'image/svg+xml',
+        media: '(prefers-color-scheme: dark)',
+      },
       {
         rel: 'icon',
         href: '/favicon.ico',
+        sizes: '16x16 32x32 48x48',
       },
     ],
     // Sets the theme class before the first paint, so a dark-theme user sees no white flash.

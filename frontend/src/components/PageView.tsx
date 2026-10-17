@@ -13,6 +13,7 @@ import { useCollabSession } from '@/hooks/useCollabSession'
 import { usePage } from '@/hooks/usePages'
 import { ApiError } from '@/lib/api-client'
 import { getErrorMessage } from '@/lib/error-handler'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { pageLabel } from '@/features/pages/page-tree'
 import { cn } from '@/lib/utils'
 import { RowProperties } from '@/components/RowProperties'
@@ -65,9 +66,9 @@ function LoadedPage({ page }: { page: PageResponse }) {
   const databaseId = parent?.kind === 'database' ? parent.id : null
 
   useEffect(() => {
-    document.title = `${page.icon ? `${page.icon} ` : ''}${pageLabel(page)} | Notion`
+    document.title = `${page.icon ? `${page.icon} ` : ''}${pageLabel(page)} | ${PRODUCT_NAME}`
     return () => {
-      document.title = 'Notion'
+      document.title = PRODUCT_NAME
     }
   }, [page])
 

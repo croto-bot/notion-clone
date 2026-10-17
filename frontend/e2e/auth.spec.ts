@@ -48,13 +48,16 @@ test.describe('landing page (F18)', () => {
       /Write\.\s*Plan\.\s*Collaborate\./
     )
     await expect(page.getByRole('link', { name: 'Log in' }).first()).toBeVisible()
-    await expect(page.getByRole('link', { name: 'Get Notion free' }).first()).toBeVisible()
+    await expect(page).toHaveTitle('Noted')
+    await expect(page.getByRole('link', { name: 'Noted home' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Get Noted free' }).first()).toBeVisible()
 
     await page.getByRole('link', { name: 'Log in' }).first().click()
     await expect(page).toHaveURL('/login')
+    await expect(page.getByRole('link', { name: 'Noted home' })).toBeVisible()
     // A fresh load, not goBack(): a click during the router's back navigation can be lost.
     await page.goto('/')
-    await page.getByRole('link', { name: 'Get Notion free' }).first().click()
+    await page.getByRole('link', { name: 'Get Noted free' }).first().click()
     await expect(page).toHaveURL('/register')
   })
 
@@ -73,8 +76,8 @@ test.describe('register (F1)', () => {
     await page.getByRole('button', { name: 'Create account' }).click()
 
     await expect(page).toHaveURL('/home')
-    // No display name: the workspace is "<email name>'s Notion".
-    const name = `${email.split('@')[0]}'s Notion`
+    // No display name: the workspace is "<email name>'s Workspace".
+    const name = `${email.split('@')[0]}'s Workspace`
     await expect(page.getByTestId('workspace-name')).toHaveText(name)
     const token = await storedToken(page)
     expect(token).not.toBeNull()
@@ -91,7 +94,7 @@ test.describe('register (F1)', () => {
     await page.getByRole('button', { name: 'Create account' }).click()
 
     await expect(page).toHaveURL('/home')
-    await expect(page.getByTestId('workspace-name')).toHaveText("Ada Lovelace's Notion")
+    await expect(page.getByTestId('workspace-name')).toHaveText("Ada Lovelace's Workspace")
     await expect(page.getByRole('heading', { level: 1 })).toContainText('Ada Lovelace')
   })
 

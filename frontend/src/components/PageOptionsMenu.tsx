@@ -150,17 +150,20 @@ export function PageOptionsMenu({ page }: { page: PageResponse }) {
           {canEdit && (
             <>
               {isDocument && (
-                <ToggleRow
-                  label="Small text"
-                  checked={page.small_text}
-                  onToggle={() => void updatePage(page.id, { small_text: !page.small_text })}
-                />
+                <>
+                  <ToggleRow
+                    label="Small text"
+                    checked={page.small_text}
+                    onToggle={() => void updatePage(page.id, { small_text: !page.small_text })}
+                  />
+                  {/* Databases always use the wide column, so the switch would do nothing. */}
+                  <ToggleRow
+                    label="Full width"
+                    checked={page.full_width}
+                    onToggle={() => void updatePage(page.id, { full_width: !page.full_width })}
+                  />
+                </>
               )}
-              <ToggleRow
-                label="Full width"
-                checked={page.full_width}
-                onToggle={() => void updatePage(page.id, { full_width: !page.full_width })}
-              />
               <ToggleRow
                 label="Lock page"
                 checked={page.locked}

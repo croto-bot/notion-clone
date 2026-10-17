@@ -4,14 +4,20 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useLayoutEffect,
   useSyncExternalStore,
 } from 'react'
+import {
+  applyStoredTheme,
+  prefersDark,
+  readStoredTheme,
+  safeStorage,
+  THEME_KEY,
+  type ResolvedTheme,
+  type Theme,
+} from '@/lib/theme'
 
-export type Theme = 'light' | 'dark' | 'system'
-export type ResolvedTheme = 'light' | 'dark'
-
-/** localStorage key of the theme choice. The inline script in __root.tsx reads the same key. */
-export const THEME_KEY = 'nx-theme'
+export type { Theme, ResolvedTheme } from '@/lib/theme'
 
 interface ThemeContextValue {
   /** What the user picked. */
@@ -27,15 +33,6 @@ const ThemeContext = createContext<ThemeContextValue | undefined>(undefined)
 
 const listeners = new Set<() => void>()
 
-function readStoredTheme(): Theme {
-  try {
-    const value = localStorage.getItem(THEME_KEY)
-    return value === 'light' || value === 'dark' || value === 'system' ? value : 'system'
-  } catch {
-    return 'system'
-  }
-}
-
 function subscribe(listener: () => void) {
   listeners.add(listener)
   const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -50,9 +47,9 @@ function subscribe(listener: () => void) {
 
 // One snapshot string ("light" | "dark" | "system:light" | "system:dark") keeps the store primitive.
 function getSnapshot(): string {
-  const theme = readStoredTheme()
+  const theme = readStoredTheme(safeStorage())
   if (theme !== 'system') return theme
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'system:dark' : 'system:light'
+  return prefersDark() ? 'system:dark' : 'system:light'
 }
 const getServerSnapshot = () => 'system:light'
 
@@ -61,11 +58,16 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const theme: Theme = snapshot.startsWith('system') ? 'system' : (snapshot as Theme)
   const resolvedTheme: ResolvedTheme = snapshot.endsWith('dark') ? 'dark' : 'light'
 
-  useEffect(() => {
-    const root = document.documentElement
-    root.classList.toggle('dark', resolvedTheme === 'dark')
-    root.style.colorScheme = resolvedTheme
-  }, [resolvedTheme])
+  // useLayoutEffect, not useEffect: this runs before the browser paints.
+  //
+  // It reads storage and matchMedia itself instead of applying the render
+  // snapshot: during hydration that snapshot is still the server one
+  // ('system:light'), and applying it would overwrite the theme the head
+  // script already painted. The snapshot is only the signal that the choice
+  // changed (pick, OS switch, another tab).
+  useLayoutEffect(() => {
+    applyStoredTheme(THEME_KEY, safeStorage(), prefersDark(), import.meta.env.DEV)
+  }, [snapshot])
 
   const setTheme = useCallback((next: Theme) => {
     try {

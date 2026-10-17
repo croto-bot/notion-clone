@@ -70,7 +70,7 @@
   --secondary: rgba(55, 53, 47, 0.06);
   --secondary-foreground: rgb(55, 53, 47);
   --muted: rgba(55, 53, 47, 0.06);
-  --muted-foreground: rgba(55, 53, 47, 0.65);
+  --muted-foreground: rgba(55, 53, 47, 0.7);
   --subtle: rgba(55, 53, 47, 0.4);
   --accent: rgba(55, 53, 47, 0.08);
   --accent-foreground: rgb(55, 53, 47);
@@ -153,6 +153,9 @@
   html {
     scrollbar-width: thin;
     scrollbar-color: rgba(127, 127, 127, 0.3) transparent;
+    /* The paint behind everything, per theme: the head script and the provider
+       only set the `dark` class and color-scheme, never colors. */
+    background-color: var(--background);
   }
   body {
     @apply bg-background text-foreground font-sans text-[14px] antialiased;

@@ -3,11 +3,13 @@ import {
   expect,
   createPage,
   ensureWorkspace,
+  getMe,
   getPage,
   getPublicPage,
   listRows,
   mouseDrag,
   sidebar,
+  updateMe,
   updatePage,
 } from './fixtures'
 import type { DatabaseProperty } from '../src/types/database'
@@ -432,5 +434,266 @@ test.describe('databases and publish (F13, F15)', () => {
     const publicDatabase = await getPublicPage(api, shared.public_id!)
     expect(publicDatabase.rows[0].created_at).toBeTruthy()
     expect(publicDatabase.rows[0].last_edited_at).toBeTruthy()
+  })
+})
+
+test.describe('databases: page options and table layout (fix round 1)', () => {
+  test('hides the full-width switch for databases', async ({ authedPage: page, api, user }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Wide board',
+    })
+    const note = await createPage(api, user, { workspace_id: workspace.id, title: 'Plain doc' })
+
+    await page.goto(`/p/${database.id}`)
+    await page.getByRole('button', { name: 'Page options' }).click()
+    // Databases always use the wide column, so the switch would do nothing.
+    await expect(page.getByRole('menuitemcheckbox', { name: 'Full width' })).toBeHidden()
+    await expect(page.getByRole('menuitemcheckbox', { name: 'Lock page' })).toBeVisible()
+    await page.keyboard.press('Escape')
+
+    await page.goto(`/p/${note.id}`)
+    await page.getByRole('button', { name: 'Page options' }).click()
+    await expect(page.getByRole('menuitemcheckbox', { name: 'Full width' })).toBeVisible()
+  })
+})
+
+test.describe('databases: table rows that grow (fix round 1)', () => {
+  test('table rows grow around wrapped cells and cut nothing off', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Grown rows',
+    })
+    const tags: DatabaseProperty = {
+      id: 'tags-col',
+      name: 'Tags',
+      type: 'multi_select',
+      options: [
+        { id: 'alpha', name: 'Alpha', color: 'blue' },
+        { id: 'beta', name: 'Beta', color: 'green' },
+        { id: 'gamma', name: 'Gamma', color: 'orange' },
+        { id: 'delta', name: 'Delta', color: 'pink' },
+      ],
+    }
+    const shipped: DatabaseProperty = { id: 'shipped-col', name: 'Shipped', type: 'checkbox' }
+    await updatePage(api, user, database.id, {
+      database_schema: [...(database.database_schema ?? []), tags, shipped],
+    })
+    await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: 'Wrapped row',
+      properties: {
+        [tags.id]: ['alpha', 'beta', 'gamma', 'delta'],
+        [shipped.id]: true,
+      },
+    })
+
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(`/p/${database.id}`)
+    const row = page.getByRole('row', { name: 'Wrapped row' })
+    await expect(row).toBeVisible()
+
+    const rowBox = await row.boundingBox()
+    const headerBox = await page.getByRole('columnheader', { name: 'Name' }).boundingBox()
+    expect(headerBox).toBeTruthy()
+    expect(rowBox!.height).toBeGreaterThan(33)
+    expect(rowBox!.height).toBeGreaterThan(headerBox!.height)
+    for (const name of ['Alpha', 'Beta', 'Gamma', 'Delta']) {
+      const chip = row.getByText(name, { exact: true })
+      await expect(chip).toBeVisible()
+      const chipBox = await chip.boundingBox()
+      expect(chipBox, name).toBeTruthy()
+      // The row's bottom border sits below every chip: nothing is cut off.
+      expect(chipBox!.y + chipBox!.height, `${name} must end inside the row`).toBeLessThanOrEqual(
+        rowBox!.y + rowBox!.height + 0.5
+      )
+    }
+  })
+
+  test('centers the checkbox in the row-properties panel', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Panel db',
+    })
+    const shipped: DatabaseProperty = { id: 'shipped-col', name: 'Shipped', type: 'checkbox' }
+    await updatePage(api, user, database.id, {
+      database_schema: [...(database.database_schema ?? []), shipped],
+    })
+    const rowPage = await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: 'Checked row',
+      properties: { [shipped.id]: true },
+    })
+
+    // Open the database first: the row page needs the tree and the database
+    // row before it can render its property panel, and both are warm then.
+    await page.goto(`/p/${database.id}`)
+    await expect(page.getByRole('row', { name: 'Checked row' })).toBeVisible()
+    await page.goto(`/p/${rowPage.id}`)
+    const panel = page.getByTestId('row-properties')
+    await expect(panel).toBeVisible()
+
+    const checkbox = page.getByRole('checkbox', { name: 'Shipped' })
+    await expect(checkbox).toBeVisible()
+    const checkboxBox = await checkbox.boundingBox()
+    const labelBox = await panel.getByText('Shipped', { exact: true }).boundingBox()
+    expect(checkboxBox).toBeTruthy()
+    expect(labelBox).toBeTruthy()
+    const checkboxCenter = checkboxBox!.y + checkboxBox!.height / 2
+    const labelCenter = labelBox!.y + labelBox!.height / 2
+    expect(Math.abs(checkboxCenter - labelCenter)).toBeLessThanOrEqual(2)
+  })
+})
+
+test.describe('databases: the table on small screens (fix round 1)', () => {
+  test('the public table stays inside a phone viewport', async ({ page, api, user }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Phone friendly',
+    })
+    await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: 'Narrow row',
+    })
+    const shared = await updatePage(api, user, database.id, { is_public: true })
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(`/share/${shared.public_id}`)
+    const table = page.getByRole('table', { name: 'Table' })
+    await expect(table).toBeVisible()
+
+    // The gutter that pulls the table into the page padding must never pull it
+    // past the viewport: the scroller starts on screen and the page does not scroll.
+    const scrollerBox = await page.getByTestId('database-table').boundingBox()
+    expect(scrollerBox).toBeTruthy()
+    expect(scrollerBox!.x).toBeGreaterThanOrEqual(-0.5)
+    const overflow = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }))
+    expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
+  })
+})
+
+test.describe('databases: table cells (fix round 2)', () => {
+  test('single-line values truncate inside their cell while chips wrap', async ({
+    authedPage: page,
+    api,
+    user,
+  }) => {
+    const me = await getMe(api, user)
+    await updateMe(api, user, {
+      display_name: 'Maximiliana Bartholomew Featherstonehaugh-Worthington',
+    })
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Long values',
+    })
+    const when: DatabaseProperty = { id: 'when-col', name: 'When', type: 'date' }
+    const owner: DatabaseProperty = { id: 'owner-col', name: 'Owner', type: 'person' }
+    const created: DatabaseProperty = { id: 'created-col', name: 'Created', type: 'created_time' }
+    const tags: DatabaseProperty = {
+      id: 'tags-col',
+      name: 'Tags',
+      type: 'multi_select',
+      options: [
+        { id: 'alpha', name: 'Alpha', color: 'blue' },
+        { id: 'beta', name: 'Beta', color: 'green' },
+        { id: 'gamma', name: 'Gamma', color: 'orange' },
+        { id: 'delta', name: 'Delta', color: 'pink' },
+      ],
+    }
+    await updatePage(api, user, database.id, {
+      database_schema: [...(database.database_schema ?? []), when, owner, created, tags],
+    })
+    await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: 'Long row',
+      properties: {
+        [when.id]: { start: '2026-09-30', end: '2027-12-31' },
+        [owner.id]: [me.id],
+        [tags.id]: ['alpha', 'beta', 'gamma', 'delta'],
+      },
+    })
+
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(`/p/${database.id}`)
+    const row = page.getByRole('row', { name: 'Long row' })
+    await expect(row.getByText('Sep 30, 2026', { exact: false })).toBeVisible()
+    await expect(row.getByText('Featherstonehaugh', { exact: false })).toBeVisible()
+    await expect(row.getByText('Delta', { exact: true })).toBeVisible()
+
+    const overflows = await row.evaluate(element =>
+      Array.from(element.querySelectorAll('[role="cell"]')).flatMap((cell, index) => {
+        const edge = cell.getBoundingClientRect().right
+        return Array.from(cell.querySelectorAll('*'))
+          .filter(child => child.getBoundingClientRect().right > edge + 0.5)
+          .map(child => `cell ${index}: ${child.tagName} "${child.textContent}"`)
+      })
+    )
+    expect(overflows, 'nothing paints past its cell').toEqual([])
+    // Dates and names stay on one 20 px line (cut with an ellipsis), they do not wrap.
+    for (const text of ['Sep 30, 2026', 'Featherstonehaugh']) {
+      const box = await row.getByText(text, { exact: false }).boundingBox()
+      expect(box, text).toBeTruthy()
+      expect(box!.height, `${text} stays on one line`).toBeLessThanOrEqual(21)
+    }
+    // The chips still wrap onto more lines and grow the row past 33 px.
+    expect((await row.boundingBox())!.height).toBeGreaterThan(33)
+  })
+})
+
+test.describe('databases: the table on small screens (fix round 2)', () => {
+  test('the row options button fits the phone gutter', async ({ authedPage: page, api, user }) => {
+    const workspace = await ensureWorkspace(api, user)
+    const database = await createPage(api, user, {
+      workspace_id: workspace.id,
+      kind: 'database',
+      title: 'Phone rows',
+    })
+    await createPage(api, user, {
+      workspace_id: workspace.id,
+      parent_id: database.id,
+      title: 'Thumb row',
+    })
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(`/p/${database.id}`)
+    const button = page.getByRole('button', { name: 'Row options for Thumb row' })
+    await expect(button).toBeAttached()
+
+    const scrollerBox = await page.getByTestId('database-table').boundingBox()
+    const buttonBox = await button.boundingBox()
+    expect(scrollerBox).toBeTruthy()
+    expect(buttonBox).toBeTruthy()
+    expect(buttonBox!.x, 'the button starts inside the scroller').toBeGreaterThanOrEqual(
+      scrollerBox!.x - 0.5
+    )
+    expect(buttonBox!.x).toBeGreaterThanOrEqual(-0.5)
+    expect(buttonBox!.x + buttonBox!.width).toBeLessThanOrEqual(
+      scrollerBox!.x + scrollerBox!.width + 0.5
+    )
   })
 })

@@ -235,7 +235,9 @@ export async function removeMember(
 /** The user's first workspace, created when the user has none (what the app does after sign-in). */
 export async function ensureWorkspace(api: APIRequestContext, user: TestUser): Promise<Workspace> {
   const existing = await listWorkspaces(api, user)
-  return existing[0] ?? createWorkspace(api, user, { name: `${user.email.split('@')[0]}'s Notion` })
+  return (
+    existing[0] ?? createWorkspace(api, user, { name: `${user.email.split('@')[0]}'s Workspace` })
+  )
 }
 
 export async function createPage(

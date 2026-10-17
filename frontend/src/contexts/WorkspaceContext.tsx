@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { NotionLogo } from '@/components/NotionLogo'
 import { useCurrentUser, displayNameOf } from '@/hooks/useUser'
 import { useCreateWorkspace, useWorkspaces } from '@/hooks/useWorkspaces'
+import { defaultWorkspaceName } from '@/lib/brand'
 import { getErrorMessage, toastApiError } from '@/lib/error-handler'
 import type { Role, Workspace } from '@/types/workspace'
 
@@ -40,7 +41,7 @@ function FullScreenMessage({ children }: { children: React.ReactNode }) {
 
 /**
  * Loads my workspaces and picks the one on screen. A user who has none (a new
- * account) gets "<name>'s Notion" created here, as the first thing after sign-in.
+ * account) gets "<name>'s Workspace" created here, as the first thing after sign-in.
  */
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const { data: workspaces, isError, error, refetch } = useWorkspaces()
@@ -61,7 +62,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     // The cap is by code points: the server takes up to 100 characters, and a
     // UTF-16 slice could cut an emoji in half, producing a string the database
     // rejects outright.
-    const name = Array.from(`${displayNameOf(me)}'s Notion`)
+    const name = Array.from(defaultWorkspaceName(displayNameOf(me)))
       .slice(0, 100)
       .join('')
     createWorkspace.mutate(

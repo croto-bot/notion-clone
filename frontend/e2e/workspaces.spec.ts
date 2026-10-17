@@ -21,7 +21,7 @@ import {
 test.describe('workspaces (F2, F3, F17)', () => {
   test('caps the first-workspace bootstrap name by code points', async ({ loginAs, api }) => {
     // 99 A's plus 🚀 is 100 code points but 101 UTF-16 units: slicing the
-    // derived name ("<name>'s Notion") to 100 units cut the emoji in half,
+    // derived name ("<name>'s Workspace") to 100 units cut the emoji in half,
     // and the database rejected the lone surrogate, stranding the account on
     // the bootstrap error screen forever. Truncating by code points keeps
     // the string valid: the first 100 code points of the derived name are

@@ -85,7 +85,7 @@ make pre-commit-install       # ruff, frontend eslint + prettier, no-mock guards
 | `frontend/` | React app |
 | `frontend/src/` | `routes/` (file-based pages; `_authed/` = sign-in required), `components/` (`ui/` = shadcn), `hooks/`, `lib/` (API client, endpoints, auth), `features/`, `contexts/`, `types/`, `styles/` |
 | `frontend/e2e/` | Playwright full-stack suite (`fixtures.ts`, `*.spec.ts`, `guards.spec.ts`, `support/`) |
-| `frontend/public/` | Static files (`favicon.ico`, `robots.txt`) |
+| `frontend/public/` | Static files (`favicon.ico`, `favicon-light.svg`, `favicon-dark.svg`, `robots.txt`) |
 | `frontend/package.json`, `frontend/bun.lock` | npm dependencies (exact pins), scripts, lint-staged config |
 | `frontend/playwright.config.ts`, `frontend/eslint.config.js`, `frontend/vite.config.ts` | Test stack, lint rules (incl. no-mock rules), build |
 

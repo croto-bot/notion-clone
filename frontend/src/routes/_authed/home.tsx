@@ -33,11 +33,16 @@ function HomePage() {
               <Clock className="size-4" />
               Recently visited
             </h2>
-            {!isLoading && recent.length === 0 && (
-              <p className="text-muted-foreground text-[14px]">
-                Pages you open show up here. Create one from the sidebar to get started.
-              </p>
-            )}
+            {isLoading ? (
+              <div className="bg-hover h-5 w-2/3 animate-pulse rounded-[3px]" aria-hidden="true" />
+            ) : recent.length === 0 ? (
+              <div className="border-border rounded-[6px] border border-dashed px-6 py-10 text-center">
+                <p className="text-[15px] font-medium">No recent pages yet</p>
+                <p className="text-muted-foreground mt-1 text-[13px]">
+                  Pages you open will show up here. Create one from the sidebar to get started.
+                </p>
+              </div>
+            ) : null}
             <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
               {recent.map(page => (
                 <li key={page.id}>
